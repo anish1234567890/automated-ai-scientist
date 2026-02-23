@@ -4,9 +4,16 @@ from core.executor import run_code
 from config import MAX_RETRIES
 
 
-def run_ai_scientist():
+def run_ai_scientist(user_prompt):
 
-    dataset_info = "CSV dataset classification problem"
+    dataset_info = f"""
+Dataset CSV for ML.
+
+User instruction:
+{user_prompt}
+
+Select models based on instruction.
+"""
     logs = []
 
     logs.append("🔬 AI Scientist started")
@@ -48,4 +55,4 @@ Return only fixed code.
 
 
 if __name__ == "__main__":
-    print(run_ai_scientist())
+    print(run_ai_scientist(""))

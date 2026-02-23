@@ -12,18 +12,29 @@ def generate_code(hypothesis):
     prompt = f"""
 You are an expert ML engineer.
 
-Write clean Python code using pandas + scikit-learn.
-
 Task:
 {hypothesis}
 
-Rules:
-- Load dataset from {DATA_PATH}
-- Train model
-- Print accuracy
-- Save results to {RESULT_PATH}
-- Handle errors
-- No explanations, only code
+Write Python code using pandas and scikit-learn.
+
+Requirements:
+1. Load dataset from {DATA_PATH}
+2. Train at least 3 ML models based on task
+3. Calculate accuracy for each model
+4. Print accuracy clearly
+5. Save results to {RESULT_PATH} exactly like:
+
+{{
+ "models": [
+   {{"name":"Logistic Regression","accuracy":0.85}},
+   {{"name":"Random Forest","accuracy":0.91}},
+   {{"name":"SVM","accuracy":0.88}}
+ ]
+}}
+
+6. Handle missing target column safely
+7. No markdown
+8. Only pure python code
 """
 
     chat = client.chat.completions.create(

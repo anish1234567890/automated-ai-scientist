@@ -1,150 +1,249 @@
-# Automated AI Scientist
+# 🧪 Automated AI Scientist — v2.0
 
-An autonomous multi-agent system that conducts machine learning experiments through iterative hypothesis generation, code implementation, execution, and scientific reflection. This project implements an AI-powered research assistant capable of autonomously designing, running, and evaluating ML experiments.
+> **A hybrid AutoML system where an LLM interprets natural language instructions and an Optuna-based engine automatically trains, tunes, and compares 21 machine learning models.**
 
-## 🎯 Project Overview
+[![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/UI-Streamlit-red)](https://streamlit.io)
+[![Optuna](https://img.shields.io/badge/Tuning-Optuna-blue)](https://optuna.org)
+[![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20Llama%203.3%2070B-orange)](https://groq.com)
 
-The **Automated AI Scientist** is a cutting-edge project for 2026, inspired by research from **Sakana AI** (AI Scientist system) and **Google Research** (AI Co-scientist). Unlike traditional chatbots, this system implements a **"write-execute-reflect"** loop where an LLM acts as a lead scientist, autonomously generating hypotheses, writing code, executing experiments, analyzing results, and iterating to improve outcomes.
+---
 
-### Core Objectives
+## 🎯 What Is This?
 
-- **Ideation:** Generate hypotheses (e.g., "Increasing the learning rate will speed up convergence but might lower final accuracy")
-- **Implementation:** Automatically write Python scripts to test hypotheses
-- **Execution:** Run scripts in a sandboxed environment and capture metrics (loss, accuracy, charts)
-- **Evaluation:** Analyze results and autonomously decide the next experiment
+Traditional AutoML tools require you to pick models and tune parameters manually. This system lets you just **type what you want**:
 
-## 🏗️ System Architecture
-
-The system consists of four specialized agents working together:
-
-| Component | Responsibility | Technical Tool |
-|-----------|---------------|----------------|
-| **Ideator Agent** | Brainstorms new hyperparameter combinations or model tweaks | Llama 3 / Mistral (via Ollama) |
-| **Coder Agent** | Translates ideas into Python/Scikit-learn scripts | CodeLlama / DeepSeek-Coder |
-| **Executor** | Runs code in a sandboxed environment | Python `subprocess` or Docker |
-| **Reviewer Agent** | Critiques results and identifies failures | Gemini / Llama 3 |
-
-## 🔄 The "AI Scientist" Workflow
-
-The system follows an iterative experimental cycle:
-
-1. **Seed Prompt:** User provides a dataset and a goal (e.g., "Find the best model for this CSV")
-2. **Experiment Planning:** The LLM proposes multiple "trials" (e.g., SVM vs. Random Forest)
-3. **The Sandbox Loop:**
-   - **Attempt 1:** LLM generates code → Script runs → Script crashes (e.g., "module not found")
-   - **Self-Correction:** Error message is fed back to the LLM → Code is fixed
-   - **Attempt 2:** Script runs → Success → Results (e.g., 0.85 accuracy) are saved
-4. **Scientific Reflection:** Agent analyzes results and generates insights (e.g., "The model is overfitting. For the next experiment, I will increase regularization")
-5. **Final Report:** After N iterations, generates a comprehensive summary of findings
-
-## 🛠️ Tech Stack
-
-Designed for **Google Colab (T4 GPU)** and **Open Source LLMs**:
-
-- **LLM Hosting:** Ollama or vLLM (to run Llama 3 or Mistral on T4 GPU)
-- **Agent Framework:** LangGraph or CrewAI (manages loops and hand-offs between agents)
-- **Database:** SQLite or JSON files (stores the "lab notebook" - history of all experiments)
-- **Visualization:** Matplotlib/Seaborn (agent saves plots as `.png` files)
-- **Frontend:** Streamlit (real-time dashboard showing AI "thinking" and plotting)
-
-## ✨ Unique Features
-
-To distinguish this project from basic automation scripts:
-
-- **Automated Peer Review:** A second LLM instance acts as a "Critical Reviewer" that identifies flaws in the first agent's logic
-- **Literature Search:** Integration with APIs like **Semantic Scholar** to search for real papers related to the dataset
-- **Safety Sandbox:** A "Code Guard" that scans LLM-generated code for dangerous commands (like `rm -rf /`) before execution
-
-## 📋 Implementation Roadmap
-
-- **Week 1-2:** Set up Ollama on Colab and create a "Hello World" demo of an LLM writing and running a simple math script
-- **Week 3-4:** Build the feedback loop - feed errors back to the LLM and ensure it can fix its own code
-- **Week 5-6:** Connect the agent to a real ML task (e.g., Titanic or Iris dataset)
-- **Week 7-8:** Build the Streamlit UI and final reporting module
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Python 3.8+
-- Google Colab account (for T4 GPU access)
-- Ollama or vLLM installed
-- Required Python packages (see `requirements.txt`)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd automated-ai-scientist
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Set up Ollama (if using local LLM)
-# Follow Ollama installation guide for your platform
+```
+try random forest, xgboost and ridge regression on this dataset
 ```
 
-### Usage
+And the system:
+- **Understands** your intent using an LLM (Llama 3.3 70B)
+- **Selects** the right models automatically
+- **Tunes** hyperparameters using Optuna (25 trials per model, TPE sampler)
+- **Ranks** all models in a leaderboard
+- **Explains** the results with AI-generated scientific insights
+- **Exports** a downloadable PDF report + runnable Python code
 
-```python
-# Example: Initialize the AI Scientist
-from ai_scientist import AutomatedAIScientist
+---
 
-scientist = AutomatedAIScientist(
-    dataset_path="data/iris.csv",
-    goal="Find the best classification model"
-)
+## 🏗️ Architecture
 
-# Run autonomous experiments
-results = scientist.run_experiments(max_iterations=10)
-
-# Generate final report
-scientist.generate_report()
 ```
+User (natural language prompt)
+            │
+            ▼
+  ┌─────────────────────┐
+  │  LLM Researcher     │  ← Llama 3.3 70B (Groq API)
+  │  (decides models)   │     Maps "l1 regression" → Lasso
+  └────────┬────────────┘     Maps "gbm" → Gradient Boosting
+           │                  Maps "knn" → K-Nearest Neighbors
+           ▼
+  ┌─────────────────────┐
+  │  AutoML Engine      │  ← Optuna TPE Sampler
+  │  (trains & tunes)   │     25 trials per model
+  └────────┬────────────┘     Detects task type automatically
+           │
+           ▼
+  ┌─────────────────────┐
+  │  LLM Insight Agent  │  ← Llama 3.3 70B (Groq API)
+  │  (scientific        │     Explains why best model won
+  │   analysis)         │     Flags overfitting/underfitting
+  └────────┬────────────┘
+           │
+           ▼
+  ┌─────────────────────────────────────────────────┐
+  │  Streamlit Dashboard                            │
+  │  • Leaderboard  • Hyperparameter breakdown      │
+  │  • AI Insights  • Downloadable Python code      │
+  │  • PDF Report   • Persistent Lab Notebook       │
+  └─────────────────────────────────────────────────┘
+```
+
+---
+
+## 🤖 Supported Models (21 Total)
+
+| Category | Models |
+|---|---|
+| **Boosting** | XGBoost, LightGBM, CatBoost, Gradient Boosting, AdaBoost |
+| **Ensemble** | Random Forest, Extra Trees, Bagging |
+| **Linear** | Linear Regression, Ridge, Lasso, Elastic Net, Logistic Regression, Bayesian Ridge, Huber, SGD |
+| **Other** | SVM, KNN, Decision Tree, Naive Bayes, LDA |
+
+All models are tuned with **Optuna TPE** — each with their own search space (e.g. XGBoost tunes 7 params, Ridge tunes `alpha` on log scale, KNN tunes `n_neighbors`, `weights`, and `metric`).
+
+---
 
 ## 📁 Project Structure
 
 ```
 automated-ai-scientist/
-├── README.md
-├── requirements.txt
-├── src/
-│   ├── agents/
-│   │   ├── ideator.py
-│   │   ├── coder.py
-│   │   └── reviewer.py
-│   ├── executor/
-│   │   └── sandbox.py
-│   ├── utils/
-│   │   ├── code_guard.py
-│   │   └── literature_search.py
-│   └── main.py
-├── data/
-├── experiments/
-│   └── lab_notebook.db
-└── frontend/
-    └── streamlit_app.py
+│
+├── ai_scientist/                  ← Backend (ML engine + agents)
+│   ├── core/
+│   │   ├── automl_engine.py       ← 21 models + Optuna tuning + code generator
+│   │   ├── researcher.py          ← LLM model selector + insight generator (with retry)
+│   │   ├── lab_notebook.py        ← SQLite experiment history
+│   │   └── report_generator.py   ← PDF export (fpdf2)
+│   ├── data/
+│   │   └── sample.csv             ← Upload your CSV via UI
+│   ├── outputs/
+│   │   ├── results.json           ← Latest results
+│   │   ├── lab_notebook.db        ← All past experiments (SQLite)
+│   │   └── report.pdf             ← Latest PDF report
+│   ├── app.py                     ← Main pipeline orchestrator
+│   ├── config.py                  ← Paths + settings
+│   ├── requirements.txt
+│   └── .env                       ← Your API keys (not committed)
+│
+├── ui/
+│   └── streamlit_app.py           ← 5-tab dashboard + Lab Notebook page
+│
+├── .env.example                   ← Copy to ai_scientist/.env
+├── .gitignore
+└── README.md
 ```
-
-## 🤝 Contributing
-
-This is a major project for academic purposes. Contributions and suggestions are welcome!
-
-## 📄 License
-
-[Specify your license here]
-
-## 🙏 Acknowledgments
-
-- Inspired by **Sakana AI**'s AI Scientist system
-- Inspired by **Google Research**'s AI Co-scientist
-- Built with open-source LLMs and frameworks
-
-## 📧 Contact
-
-[Your contact information]
 
 ---
 
-**Note:** This project is designed as a comprehensive demonstration of autonomous AI research capabilities, combining multiple LLM agents, code generation, execution, and scientific reasoning.
+## 🚀 Getting Started
+
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/anish1234567890/automated-ai-scientist.git
+cd automated-ai-scientist
+git checkout anish
+```
+
+### 2. Create virtual environment (recommended)
+
+```bash
+cd ai_scientist
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# Mac/Linux
+source venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+Optional models (LightGBM + CatBoost):
+```bash
+pip install lightgbm catboost
+```
+
+### 4. Set up API key
+
+```bash
+# From the repo root
+copy .env.example ai_scientist\.env     # Windows
+# cp .env.example ai_scientist/.env    # Mac/Linux
+```
+
+Open `ai_scientist/.env` and add your key:
+```
+GROQ_API_KEY=your_key_here
+```
+
+Get a **free** Groq API key at: https://console.groq.com
+
+### 5. Run the dashboard
+
+```bash
+cd ui
+streamlit run streamlit_app.py
+```
+
+---
+
+## 📋 Dataset Requirements
+
+Your CSV must have a column named **`target`** — the column to predict.
+
+```csv
+age, income, education, target
+25, 50000, 16, 1
+32, 75000, 18, 0
+```
+
+The system **auto-detects** classification vs regression from the target column. No configuration needed.
+
+---
+
+## 🖥️ Dashboard Tabs
+
+| Tab | Description |
+|---|---|
+| 🏆 **Leaderboard** | Ranked models with scores + bar chart comparison |
+| ⚙️ **Parameters** | Full Optuna best hyperparameters for every model |
+| 🔬 **AI Insights** | LLM-generated scientific analysis of results |
+| 💻 **Final Code** | Fully runnable Python with best params — downloadable |
+| 📄 **Report** | Downloadable PDF report + full agent logs |
+| 📓 **Lab Notebook** | All past experiments with code download per run |
+
+---
+
+## 💬 Example Prompts
+
+```
+try all boosting models
+compare random forest and xgboost for accuracy
+use l1 and l2 regression
+try everything and find the best model
+use fast models for classification
+compare knn, decision tree and naive bayes
+```
+
+---
+
+## ⚙️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| LLM | Llama 3.3 70B via Groq API |
+| Hyperparameter Tuning | Optuna (TPE Sampler) |
+| ML Models | Scikit-learn, XGBoost, LightGBM, CatBoost |
+| UI | Streamlit |
+| Database | SQLite (Python standard library) |
+| PDF Reports | fpdf2 |
+| Language | Python 3.10+ |
+
+---
+
+## 💼 For Interviews / Viva
+
+> *"I built a hybrid AutoML system that combines LLM-based model selection with an Optuna-powered hyperparameter tuning engine. The user provides instructions in natural language — the LLM decides which of 21 ML models to try, Optuna tunes each model's hyperparameters over 25 trials using TPE sampling, a second LLM agent generates scientific insights on the results, and the system outputs a ranked leaderboard, downloadable Python code with the best parameters baked in, and a PDF research report. All experiments are stored in a SQLite lab notebook for reproducibility."*
+
+**Key innovation:** Unlike standard AutoML tools, this system understands natural language intent. The user doesn't need to know model names or hyperparameter ranges — they describe their goal and the system figures out the rest.
+
+---
+
+## 🔮 Future Scope
+
+- Deep learning support (PyTorch / TensorFlow)
+- Cross-validation instead of single train/test split
+- SHAP feature importance visualization
+- Cloud deployment (Streamlit Cloud / HuggingFace Spaces)
+- Ensemble of top-k models
+- Multi-dataset experiment workspace
+
+---
+
+## 🙏 Acknowledgments
+
+- Inspired by [Sakana AI's AI Scientist](https://github.com/SakanaAI/AI-Scientist)
+- Inspired by [Google Research's AI Co-Scientist](https://research.google/blog/accelerating-scientific-breakthroughs-with-an-ai-co-scientist/)
+- Built with [Groq](https://groq.com) · [Optuna](https://optuna.org) · [Streamlit](https://streamlit.io)
+
+---
+
+**Built by Anish** | [GitHub](https://github.com/anish1234567890/automated-ai-scientist)

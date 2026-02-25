@@ -1,13 +1,9 @@
-from google import genai
+import sqlite3
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-response = client.models.generate_content(
-    model="gemini-2.0-flash",
-    contents="Say hello"
-)
-
-print(response.text)
+os.makedirs('test_outputs', exist_ok=True)
+conn = sqlite3.connect('test_outputs/test.db')
+conn.execute('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, name TEXT)')
+conn.execute("INSERT INTO t (name) VALUES (?)", ('hello',))
+conn.commit()
+print(conn.execute('SELECT * FROM t').fetchall())
+conn.close()

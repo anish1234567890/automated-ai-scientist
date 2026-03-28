@@ -107,7 +107,7 @@ def run_ai_scientist(user_prompt: str,
     # SUPERVISED BRANCH (original)
     # ══════════════════════════════════════════════════════════════
     log("🧠 Researcher agent deciding models...")
-    selected_models = decide_models(user_prompt)
+    selected_models = decide_models(user_prompt, df)
     logs.append(f"🧠 Models selected: {', '.join(selected_models)}")
 
     log("⚙️ AutoML engine starting...")

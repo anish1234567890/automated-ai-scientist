@@ -33,10 +33,28 @@ def _call_groq(messages: list, max_tokens: int = 512) -> str:
 
 # ── SUPERVISED ────────────────────────────────────────────────────
 
-def decide_models(user_prompt: str) -> list:
+def decide_models(user_prompt: str, df=None) -> list:
     """LLM reads the user's natural language instruction and returns model names."""
+    dataset_info = ""
+    if df is not None:
+        try:
+            target_type = ""
+            if "target" in df.columns:
+                target_type = "classification" if df["target"].nunique() < 15 else "regression"
+            dataset_info = f"""
+Dataset Summary:
+Rows: {len(df)}
+Columns: {df.shape[1]}
+Missing: {df.isnull().sum().to_dict()}
+Target type guess: {target_type}
+"""
+        except Exception:
+            dataset_info = ""
+
     prompt = f"""
 You are an expert ML scientist helping choose models for an AutoML experiment.
+
+{dataset_info}
 
 User instruction:
 {user_prompt}

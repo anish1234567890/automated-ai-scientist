@@ -113,12 +113,21 @@ def _run_kmeans(X, n_trials):
         lbl   = KMeans(n_clusters=k, init=init, n_init=n_ini,
                        random_state=42, max_iter=300).fit_predict(X)
         sc    = _score(X, lbl)
-        sil   = sc["silhouette"] or -1.0
-        if sil > best["score"]:
-            best.update({"score": sil,
+        sil = sc["silhouette"] or -1.0
+        db  = sc["davies_bouldin"] or 10
+        ch  = sc["calinski_harabasz"] or 0
+
+        score = (
+            0.5 * sil
+            - 0.3 * db
+            + 0.2 * ch
+        )
+
+        if score > best["score"]:
+            best.update({"score": score,
                          "params": {"n_clusters": k, "init": init, "n_init": n_ini},
                          "labels": lbl})
-        return sil
+        return score
 
     optuna.create_study(direction="maximize",
                         sampler=optuna.samplers.TPESampler(seed=42)
@@ -135,12 +144,21 @@ def _run_dbscan(X, n_trials):
         msp  = trial.suggest_int("min_samples", 2, 20)
         lbl  = DBSCAN(eps=eps, min_samples=msp).fit_predict(X)
         sc   = _score(X, lbl)
-        sil  = sc["silhouette"] or -1.0
-        if sil > best["score"]:
-            best.update({"score": sil,
+        sil = sc["silhouette"] or -1.0
+        db  = sc["davies_bouldin"] or 10
+        ch  = sc["calinski_harabasz"] or 0
+
+        score = (
+            0.5 * sil
+            - 0.3 * db
+            + 0.2 * ch
+        )
+
+        if score > best["score"]:
+            best.update({"score": score,
                          "params": {"eps": round(eps, 3), "min_samples": msp},
                          "labels": lbl})
-        return sil
+        return score
 
     optuna.create_study(direction="maximize",
                         sampler=optuna.samplers.TPESampler(seed=42)
@@ -158,12 +176,21 @@ def _run_agglomerative(X, n_trials):
                                          ["ward", "complete", "average", "single"])
         lbl  = AgglomerativeClustering(n_clusters=k, linkage=link).fit_predict(X)
         sc   = _score(X, lbl)
-        sil  = sc["silhouette"] or -1.0
-        if sil > best["score"]:
-            best.update({"score": sil,
+        sil = sc["silhouette"] or -1.0
+        db  = sc["davies_bouldin"] or 10
+        ch  = sc["calinski_harabasz"] or 0
+
+        score = (
+            0.5 * sil
+            - 0.3 * db
+            + 0.2 * ch
+        )
+
+        if score > best["score"]:
+            best.update({"score": score,
                          "params": {"n_clusters": k, "linkage": link},
                          "labels": lbl})
-        return sil
+        return score
 
     optuna.create_study(direction="maximize",
                         sampler=optuna.samplers.TPESampler(seed=42)
@@ -183,12 +210,21 @@ def _run_gmm(X, n_trials):
                                 random_state=42, max_iter=200)
         lbl   = model.fit_predict(X)
         sc    = _score(X, lbl)
-        sil   = sc["silhouette"] or -1.0
-        if sil > best["score"]:
-            best.update({"score": sil,
+        sil = sc["silhouette"] or -1.0
+        db  = sc["davies_bouldin"] or 10
+        ch  = sc["calinski_harabasz"] or 0
+
+        score = (
+            0.5 * sil
+            - 0.3 * db
+            + 0.2 * ch
+        )
+
+        if score > best["score"]:
+            best.update({"score": score,
                          "params": {"n_components": k, "covariance_type": ctype},
                          "labels": lbl})
-        return sil
+        return score
 
     optuna.create_study(direction="maximize",
                         sampler=optuna.samplers.TPESampler(seed=42)
@@ -207,14 +243,23 @@ def _run_isolation_forest(X, n_trials):
                                   random_state=42, n_jobs=-1).fit_predict(X)
         lbl    = np.where(raw == 1, 0, 1)
         sc     = _score(X, lbl)
-        sil    = sc["silhouette"] or -1.0
-        if sil > best["score"]:
-            best.update({"score": sil,
+        sil = sc["silhouette"] or -1.0
+        db  = sc["davies_bouldin"] or 10
+        ch  = sc["calinski_harabasz"] or 0
+
+        score = (
+            0.5 * sil
+            - 0.3 * db
+            + 0.2 * ch
+        )
+
+        if score > best["score"]:
+            best.update({"score": score,
                          "params": {"n_estimators": n_est,
                                     "contamination": round(contam, 3),
                                     "anomalies_found": int(np.sum(lbl == 1))},
                          "labels": lbl})
-        return sil
+        return score
 
     optuna.create_study(direction="maximize",
                         sampler=optuna.samplers.TPESampler(seed=42)
@@ -233,14 +278,23 @@ def _run_lof(X, n_trials):
                                     contamination=contam, n_jobs=-1).fit_predict(X)
         lbl    = np.where(raw == 1, 0, 1)
         sc     = _score(X, lbl)
-        sil    = sc["silhouette"] or -1.0
-        if sil > best["score"]:
-            best.update({"score": sil,
+        sil = sc["silhouette"] or -1.0
+        db  = sc["davies_bouldin"] or 10
+        ch  = sc["calinski_harabasz"] or 0
+
+        score = (
+            0.5 * sil
+            - 0.3 * db
+            + 0.2 * ch
+        )
+
+        if score > best["score"]:
+            best.update({"score": score,
                          "params": {"n_neighbors": n_nbr,
                                     "contamination": round(contam, 3),
                                     "outliers_found": int(np.sum(lbl == 1))},
                          "labels": lbl})
-        return sil
+        return score
 
     optuna.create_study(direction="maximize",
                         sampler=optuna.samplers.TPESampler(seed=42)

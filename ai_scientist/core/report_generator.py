@@ -12,6 +12,7 @@ try:
     FPDF_AVAILABLE = True
 except ImportError:
     FPDF_AVAILABLE = False
+    FPDF = object   # dummy base so class definition never crashes at import
 
 
 class _PDF(FPDF):

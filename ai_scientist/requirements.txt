@@ -7,3 +7,6 @@ xgboost
 pandas
 numpy
 fpdf2
+shap
+lightgbm
+catboost

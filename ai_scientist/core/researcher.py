@@ -230,3 +230,133 @@ Write a 5-6 sentence scientific analysis covering:
 Be specific and technical. Write as the AI Scientist in first person. Flowing paragraphs, no bullet points.
 """
     return _call_groq([{"role": "user", "content": prompt}], max_tokens=600)
+
+# ── V3 ADDITIONS ──────────────────────────────────────────────────
+
+def generate_hypothesis(user_prompt: str, selected_models: list,
+                        df=None, health: dict = None) -> str:
+    """Generate a scientific hypothesis BEFORE training starts."""
+    dataset_ctx = ""
+    if df is not None:
+        try:
+            n, c = df.shape
+            num  = df.select_dtypes("number").shape[1]
+            cat  = df.select_dtypes("object").shape[1]
+            miss = round(df.isnull().sum().sum() / max(n*c, 1) * 100, 1)
+            ttype = ""
+            if "target" in df.columns:
+                ttype = "classification" if df["target"].nunique() < 15 else "regression"
+            dataset_ctx = (f"Dataset: {n} rows, {c} cols, "
+                           f"{num} numeric, {cat} categorical, "
+                           f"{miss}% missing, task={ttype}")
+        except Exception:
+            pass
+
+    health_ctx = ""
+    if health:
+        high = [i for i in health.get("issues", []) if i["severity"] == "high"]
+        if high:
+            health_ctx = "Data warnings: " + "; ".join(i["message"][:60] for i in high[:2])
+
+    prompt = f"""
+You are an expert ML scientist. Before any training, write a scientific hypothesis.
+
+{dataset_ctx}
+{health_ctx}
+Models being tested: {', '.join(selected_models)}
+User goal: {user_prompt}
+
+Write 3-4 sentences starting with "My hypothesis is that..."
+Predict which model will win and why. Be specific and technical.
+"""
+    return _call_groq([{"role": "user", "content": prompt}], max_tokens=350)
+
+
+def generate_insight(results: dict, user_prompt: str,
+                     hypothesis: str = "", shap_result: dict = None) -> str:
+    """LLM insight — accepts optional hypothesis and SHAP for richer analysis."""
+    task   = results.get("task", "unknown")
+    metric = "Accuracy" if task == "classification" else "RMSE"
+
+    model_summary = ""
+    for m in results.get("models", []):
+        score = m.get("score")
+        s_str = f"{score:.4f}" if score is not None else "Failed"
+        model_summary += f"- {m['name']}: {metric}={s_str} | params={m.get('best_params',{})}\n"
+
+    ens = results.get("ensemble", {})
+    ens_line = ""
+    if ens and not ens.get("error"):
+        ens_line = f"\nEnsemble (Top-3): {metric}={ens.get('cv_score','N/A')}"
+
+    hyp_ctx = f"\nPre-experiment hypothesis: {hypothesis}" if hypothesis else ""
+
+    shap_ctx = ""
+    if shap_result and not shap_result.get("error"):
+        top = shap_result.get("top_features", [])[:5]
+        if top:
+            shap_ctx = "\nSHAP top features: " + ", ".join(
+                f"{t['feature']}({t['importance']:.4f})" for t in top)
+
+    prompt = f"""
+You are a senior ML research scientist reviewing AutoML experiment results.
+
+User goal: {user_prompt}
+Task: {task} | Metric: {metric} (5-fold CV)
+{hyp_ctx}
+Results:
+{model_summary}{ens_line}
+{shap_ctx}
+
+Write a 6-7 sentence scientific analysis:
+1. Was the hypothesis correct?
+2. Which model performed best and why
+3. What SHAP features reveal about the problem (if available)
+4. What best hyperparameters suggest about the data
+5. Did the ensemble improve over individual models?
+6. One specific actionable recommendation
+
+First person, flowing paragraphs, no bullet points.
+"""
+    return _call_groq([{"role": "user", "content": prompt}], max_tokens=700)
+
+
+def generate_unsupervised_insight(results: dict, user_prompt: str,
+                                   cluster_narrative: str = "") -> str:
+    """Unsupervised insight — accepts cluster narrative for richer analysis."""
+    clustering = results.get("clustering", [])
+    summary = ""
+    for c in clustering:
+        sil = c.get("silhouette")
+        if sil is not None:
+            summary += (f"- {c['name']}: Silhouette={sil:.4f}, "
+                        f"DB={c.get('davies_bouldin')}, CH={c.get('calinski_harabasz')}, "
+                        f"Clusters={c.get('n_clusters_found','?')}, "
+                        f"params={c.get('best_params',{})}\n")
+        else:
+            summary += f"- {c['name']}: Failed — {c.get('error','unknown')}\n"
+
+    pca_var = results.get("pca_variance", [])
+    profile_ctx = f"\nCluster profiles:\n{cluster_narrative}" if cluster_narrative else ""
+
+    prompt = f"""
+You are a senior ML research scientist reviewing unsupervised learning results.
+
+User goal: {user_prompt}
+PCA variance: {pca_var}
+
+Results:
+{summary}
+{profile_ctx}
+
+Write a 6-7 sentence analysis:
+1. Which algorithm found best structure and why
+2. What cluster profiles reveal about real-world meaning
+3. What hyperparameters suggest about data distribution
+4. What PCA variance explains about dimensionality
+5. One actionable recommendation
+6. Whether DBSCAN found density-based groups or data is globular
+
+First person, flowing paragraphs, no bullet points.
+"""
+    return _call_groq([{"role": "user", "content": prompt}], max_tokens=700)

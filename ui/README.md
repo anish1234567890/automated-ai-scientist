@@ -1,31 +1,51 @@
-# ui — Streamlit Dashboard
+# UI (Streamlit Frontend)
 
-This folder contains the Streamlit frontend for the Automated AI Scientist.
+This folder contains the Streamlit web interface for Automated AI Scientist (AAS). The UI handles dataset upload, pipeline execution, real-time progress, result visualization, report/code downloads, and lab notebook browsing.
 
 ## Run
-
-Make sure you've set up the backend first (see `../ai_scientist/README.md`).
 
 ```bash
 cd ui
 streamlit run streamlit_app.py
 ```
 
-The dashboard will open at `http://localhost:8501`
+## Requirements
 
-## Features
+- streamlit
+- pandas
+- numpy
+- altair
 
-| Tab | What it shows |
-|---|---|
-| 🏆 Leaderboard | Ranked model scores + bar chart |
-| ⚙️ Parameters | Optuna best hyperparameters per model |
-| 🔬 AI Insights | LLM scientific analysis |
-| 💻 Final Code | Downloadable Python with best params |
-| 📄 Report | PDF download + agent logs |
-| 📓 Lab Notebook | Full history of all experiments |
+## Tabs and Pages
 
-## Notes
+### Page: 🚀 Run Experiment
 
-- Upload your CSV via the UI — no need to copy files manually
-- The dataset must have a column named `target`
-- Adjust Optuna trials (10–50) using the slider — more trials = better tuning but slower
+#### Supervised mode tabs
+1. 🏆 Leaderboard
+2. 🔄 Self-Improve
+3. 🔧 Features
+4. ⚙️ Parameters
+5. 🔍 SHAP
+6. 🔬 AI Insights
+7. 💻 Final Code
+8. 📄 Report
+
+#### Unsupervised mode tabs
+1. 🔵 Clusters
+2. 🔴 Anomalies
+3. 📋 Profiles
+4. 🔬 AI Insights
+5. 💻 Final Code
+6. 📄 Report
+
+### Page: 📓 Lab Notebook
+
+- Shows saved supervised and unsupervised experiments from SQLite.
+- Displays per-experiment metadata, metrics, insights, and download buttons.
+
+## Connection to Backend (`ai_scientist/app.py`)
+
+- `streamlit_app.py` adds `ai_scientist` to `sys.path` and imports:
+  - `run_ai_scientist` from `ai_scientist/app.py`
+  - `get_all_experiments`, `clear_all_experiments` from `core/lab_notebook.py`
+- Clicking **Run AI Scientist v3.0** calls `run_ai_scientist(...)` and renders the returned dictionary (`results`, `results_r2`, `insight`, `health`, `shap_result`, `report_path`, logs, etc.).

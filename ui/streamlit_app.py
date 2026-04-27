@@ -1,6 +1,8 @@
 import streamlit as st
 import sys
 import os
+import re
+import time
 import pandas as pd
 import numpy as np
 
@@ -12,7 +14,14 @@ os.chdir(AI_DIR)
 
 from app import run_ai_scientist
 from core.lab_notebook import get_all_experiments, clear_all_experiments
-from config import DATA_PATH, REPORT_PATH
+from config import DATA_PATH
+
+
+def _fmt4(value):
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return "N/A"
 
 st.set_page_config(
     page_title="Automated AI Scientist v3.0",
@@ -82,13 +91,17 @@ if "Run" in page:
             sp = os.path.join(AI_DIR, "data", "sample.csv")
             with open(sp, "wb") as f:
                 f.write(uploaded.getbuffer())
-            dfp = pd.read_csv(sp)
+            try:
+                dfp = pd.read_csv(sp)
+            except Exception as e:
+                st.error(f"Could not read CSV: {e}. Please upload a valid UTF-8 CSV file.")
+                st.stop()
             if "target" in dfp.columns:
                 st.success(f"✅ {dfp.shape[0]} rows × {dfp.shape[1]} cols — supervised ready")
             else:
                 st.info(f"ℹ️ {dfp.shape[0]} rows × {dfp.shape[1]} cols — unsupervised mode")
             with st.expander("Preview dataset"):
-                st.dataframe(dfp.head(8), use_container_width=True)
+                st.dataframe(dfp.head(8), width="stretch")
 
         st.subheader("🧠 Experiment Instruction")
         user_prompt = st.text_area(
@@ -115,7 +128,7 @@ if "Run" in page:
                                      help="Auto-runs improved Round 2")
 
         run_btn = st.button("🚀 Run AI Scientist v3.0",
-                            type="primary", use_container_width=True)
+                            type="primary", width="stretch")
 
     with col2:
         st.subheader("📡 Live Status")
@@ -131,10 +144,214 @@ if "Run" in page:
             st.warning("Please upload a dataset first.")
             st.stop()
 
-        lines = []
+        status_box.empty()
+        with col2:
+            round_header_ph = st.empty()
+            overall_label_ph = st.empty()
+            overall_bar_ph = st.empty()
+            model_title_ph = st.empty()
+            model_bar_ph = st.empty()
+            model_meta_ph = st.empty()
+            model_done_ph = st.empty()
+            log_ph = st.empty()
+
+        state = {
+            "log_lines": [],
+            "done_lines": [],
+            "round": 1,
+            "stats": {
+                1: {"completed": 0, "total": 0},
+                2: {"completed": 0, "total": 0},
+            },
+            "model_index": 0,
+            "current_model": "",
+            "current_trial": 0,
+            "current_trial_total": 0,
+            "current_best": None,
+            "model_start_time": None,
+        }
+
+        def _clamp_progress(value):
+            try:
+                return max(0.0, min(float(value), 1.0))
+            except Exception:
+                return 0.0
+
+        def _safe_markdown(ph, text):
+            try:
+                ph.markdown(text)
+            except Exception:
+                pass
+
+        def _safe_caption(ph, text):
+            try:
+                ph.caption(text)
+            except Exception:
+                pass
+
+        def _safe_progress(ph, value):
+            try:
+                ph.progress(_clamp_progress(value))
+            except Exception:
+                pass
+
+        def _safe_empty(ph):
+            try:
+                ph.empty()
+            except Exception:
+                pass
+
+        def _safe_success(ph, text):
+            try:
+                ph.success(text)
+            except Exception:
+                pass
+
+        def _current_stats():
+            return state["stats"][state["round"]]
+
+        def _set_total(total_models):
+            s = _current_stats()
+            s["total"] = max(int(total_models), 0)
+            if s["total"] > 0 and s["completed"] > s["total"]:
+                s["completed"] = s["total"]
+
+        def _increment_completed():
+            s = _current_stats()
+            if s["total"] > 0:
+                s["completed"] = min(s["completed"] + 1, s["total"])
+            else:
+                s["completed"] += 1
+
+        def _render_overall():
+            s = _current_stats()
+            prefix = "Overall" if state["round"] == 1 else "Round 2"
+            if s["total"] > 0:
+                _safe_markdown(
+                    overall_label_ph,
+                    f"**{prefix}: {s['completed']}/{s['total']} models complete**",
+                )
+                _safe_progress(overall_bar_ph, min(s["completed"] / s["total"], 1.0))
+            else:
+                _safe_markdown(overall_label_ph, f"**{prefix}: waiting for model tuning...**")
+                _safe_progress(overall_bar_ph, 0.0)
+
+        def _clear_model_panel():
+            _safe_empty(model_title_ph)
+            _safe_empty(model_bar_ph)
+            _safe_empty(model_meta_ph)
+
+        def _render_model_progress():
+            s = _current_stats()
+            if not state["current_model"]:
+                _clear_model_panel()
+                return
+
+            _safe_markdown(
+                model_title_ph,
+                f"⚙️ Tuning **{state['current_model']}** "
+                f"({state['model_index']}/{s['total']})",
+            )
+            if state["current_trial_total"] > 0:
+                in_progress_value = min(
+                    state["current_trial"] / state["current_trial_total"],
+                    0.99,
+                )
+                _safe_progress(model_bar_ph, in_progress_value)
+                best_txt = f"{state['current_best']:.4f}" if state["current_best"] is not None else "N/A"
+                _safe_caption(
+                    model_meta_ph,
+                    f"Trial {state['current_trial']}/{state['current_trial_total']} • "
+                    f"Best so far: {best_txt}",
+                )
+            else:
+                _safe_progress(model_bar_ph, 0.0)
+                _safe_caption(model_meta_ph, "Waiting for trial updates...")
+
+        def _finalize_current_model(increment_counter=True):
+            if not state["current_model"]:
+                return
+            elapsed = 0.0
+            if state["model_start_time"] is not None:
+                elapsed = time.time() - state["model_start_time"]
+            trials = state["current_trial_total"] or state["current_trial"] or "?"
+            score_txt = f"{state['current_best']:.4f}" if state["current_best"] is not None else "N/A"
+            state["done_lines"].append(
+                f"✅ {state['current_model']} — Score: {score_txt} ({trials} trials, {elapsed:.1f}s)"
+            )
+            _safe_markdown(model_done_ph, "\n\n".join(state["done_lines"][-10:]))
+            if increment_counter:
+                _increment_completed()
+            state["current_model"] = ""
+            state["current_trial"] = 0
+            state["current_trial_total"] = 0
+            state["current_best"] = None
+            state["model_start_time"] = None
+            _render_overall()
+            _clear_model_panel()
+
+        def _switch_to_round2():
+            _finalize_current_model(increment_counter=True)
+            state["round"] = 2
+            state["stats"][2] = {"completed": 0, "total": 0}
+            _safe_markdown(round_header_ph, "**🔄 Round 2 — Auto-Improved**")
+            _clear_model_panel()
+            _render_overall()
+
+        _render_overall()
+
         def upd(stage, detail=""):
-            lines.append(f"**{stage}** {detail}")
-            status_box.markdown("\n\n".join(lines))
+            stage_txt = str(stage).strip()
+            detail_txt = str(detail).strip() if detail not in (None, "") else ""
+
+            if "AutoML Round 2" in stage_txt:
+                _switch_to_round2()
+
+            model_match = re.search(r"Tuning\s*\[(\d+)\s*/\s*(\d+)\]\s*:\s*(.+)$", stage_txt)
+            if model_match:
+                idx = int(model_match.group(1))
+                total = int(model_match.group(2))
+                model_name = model_match.group(3).strip()
+
+                if state["current_model"] and state["current_model"] != model_name:
+                    _finalize_current_model(increment_counter=True)
+
+                state["model_index"] = idx
+                _set_total(total)
+                state["current_model"] = model_name
+                state["current_trial"] = 0
+                state["current_trial_total"] = 0
+                state["current_best"] = None
+                state["model_start_time"] = time.time()
+                _render_overall()
+                _render_model_progress()
+                return
+
+            trial_match = re.search(r"trial\s+(\d+)\s*/\s*(\d+)", stage_txt, re.IGNORECASE)
+            if trial_match and state["current_model"]:
+                trial_num = int(trial_match.group(1))
+                trial_total = int(trial_match.group(2))
+                state["current_trial"] = trial_num
+                state["current_trial_total"] = trial_total
+
+                score_match = re.search(r"best so far[:\s]+([\d.]+)", detail_txt, re.IGNORECASE)
+                if score_match:
+                    try:
+                        state["current_best"] = float(score_match.group(1))
+                    except Exception:
+                        pass
+
+                if trial_num % 3 == 0 or trial_num == trial_total:
+                    _render_model_progress()
+                return
+
+            if state["current_model"] and not stage_txt.lower().startswith("trial"):
+                _finalize_current_model(increment_counter=True)
+
+            line = stage_txt if not detail_txt else f"{stage_txt} {detail_txt}"
+            if line:
+                state["log_lines"].append(f"**{line}**")
+                _safe_markdown(log_ph, "\n\n".join(state["log_lines"][-14:]))
 
         with st.spinner("Running v3.0 pipeline..."):
             out = run_ai_scientist(
@@ -145,7 +362,12 @@ if "Run" in page:
                 enable_self_improve=enable_si,
             )
 
-        status_box.success("✅ v3.0 pipeline complete!")
+        _finalize_current_model(increment_counter=True)
+        s = _current_stats()
+        if s["total"] > 0 and s["completed"] < s["total"]:
+            s["completed"] = s["total"]
+            _render_overall()
+        _safe_success(overall_label_ph, "✅ v3.0 pipeline complete!")
         st.divider()
 
         # ── Unpack ────────────────────────────────────────────────
@@ -206,8 +428,8 @@ if "Run" in page:
             st.markdown(
                 f'<div class="{cls}">'
                 f'{icon} <strong>Self-Improvement Loop</strong> — '
-                f'Round 1: <strong>{r1b.get("name","?")} ({r1b.get("score",0):.4f})</strong> → '
-                f'Round 2: <strong>{r2b.get("name","?")} ({r2b.get("score",0):.4f})</strong> '
+                f'Round 1: <strong>{r1b.get("name","?")} ({_fmt4(r1b.get("score"))})</strong> → '
+                f'Round 2: <strong>{r2b.get("name","?")} ({_fmt4(r2b.get("score"))})</strong> '
                 f'Δ = <strong>{delta:+.4f}</strong></div>',
                 unsafe_allow_html=True,
             )
@@ -231,10 +453,10 @@ if "Run" in page:
             with c3:
                 if mdata:
                     b = mdata[0]
-                    st.metric(f"Best {metric}", f"{b['score']:.4f}", delta=b["name"])
+                    st.metric(f"Best {metric}", _fmt4(b.get("score")), delta=b["name"])
             with c4:
                 if ens and not ens.get("error"):
-                    st.metric("Ensemble", f"{ens['cv_score']:.4f}", delta="Top-3")
+                    st.metric("Ensemble", _fmt4(ens.get("cv_score")), delta="Top-3")
             with c5:
                 st.metric("Dataset", f"{shape[0]}×{shape[1]}" if shape else "N/A")
 
@@ -259,7 +481,7 @@ if "Run" in page:
                     best = mdata[0]
                     st.markdown(
                         f'<div class="c-blue">🥇 <strong>{best["name"]}</strong>'
-                        f' — {metric}: <strong>{best["score"]:.4f}</strong></div>',
+                        f' — {metric}: <strong>{_fmt4(best.get("score"))}</strong></div>',
                         unsafe_allow_html=True,
                     )
                     rows = []
@@ -268,11 +490,11 @@ if "Run" in page:
                         rows.append({"Rank": medal, "Model": m["name"],
                                      f"{metric} (CV-5)": round(m["score"], 4),
                                      "Trials": m.get("n_trials", 25)})
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                     if ens and not ens.get("error"):
                         st.markdown(
                             f'<div class="c-yellow">🤝 <strong>Ensemble (Top-3 Voting)</strong>'
-                            f' — {metric}: <strong>{ens["cv_score"]:.4f}</strong>'
+                            f' — {metric}: <strong>{_fmt4(ens.get("cv_score"))}</strong>'
                             f' | {", ".join(ens.get("models_used", []))}</div>',
                             unsafe_allow_html=True,
                         )
@@ -290,8 +512,8 @@ if "Run" in page:
                     r1b = rc["round1_best"]; r2b = rc["round2_best"]
                     delta = rc.get("delta", 0); imp = rc.get("improved", False)
                     ca, cb, cc = st.columns(3)
-                    with ca: st.metric("Round 1 Best", f"{r1b['score']:.4f}", delta=r1b["name"])
-                    with cb: st.metric("Round 2 Best", f"{r2b['score']:.4f}", delta=r2b["name"])
+                    with ca: st.metric("Round 1 Best", _fmt4(r1b.get("score")), delta=r1b["name"])
+                    with cb: st.metric("Round 2 Best", _fmt4(r2b.get("score")), delta=r2b["name"])
                     with cc: st.metric("Δ Improvement", f"{delta:+.4f}",
                                        delta=f"{rc.get('pct_change',0):.2f}% {'✅' if imp else '⚠️'}")
                     st.divider()
@@ -313,7 +535,7 @@ if "Run" in page:
                                         "Model": m["name"],
                                         f"{metric} (CV-5)": round(m["score"],4)}
                                        for i, m in enumerate(r2_valid)]
-                            st.dataframe(pd.DataFrame(r2_rows), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(r2_rows), width="stretch", hide_index=True)
                 elif not enable_si:
                     st.info("Self-Improvement was disabled for this run.")
                 else:
@@ -329,7 +551,7 @@ if "Run" in page:
                     feat_rows = [{"Name": f["name"], "Expression": f["expression"],
                                   "Rationale": f["rationale"], "Status": f["status"]}
                                  for f in nf]
-                    st.dataframe(pd.DataFrame(feat_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(feat_rows), width="stretch", hide_index=True)
                     st.caption("Failed expressions had syntax errors or missing columns — safely skipped.")
                 elif not enable_fe:
                     st.info("Feature Engineering was disabled for this run.")
@@ -342,12 +564,12 @@ if "Run" in page:
                 st.caption(f"Optuna TPE + MedianPruner | {results.get('n_trials_per_model',25)} trials per model")
                 for i, m in enumerate(mdata):
                     medal = ["🥇","🥈","🥉"][i] if i < 3 else f"#{i+1}"
-                    with st.expander(f"{medal} {m['name']}  |  {metric}: {m.get('score',0):.4f}",
+                    with st.expander(f"{medal} {m['name']}  |  {metric}: {_fmt4(m.get('score'))}",
                                      expanded=(i == 0)):
                         ca, cb = st.columns(2)
                         with ca:
                             st.markdown(f"**Model:** `{m['name']}`")
-                            st.markdown(f"**{metric} (CV-5):** `{m.get('score',0):.4f}`")
+                            st.markdown(f"**{metric} (CV-5):** `{_fmt4(m.get('score'))}`")
                             st.markdown(f"**Trials:** `{m.get('n_trials',25)}`")
                             st.markdown("**Pipeline:** PolyFeatures → SelectKBest → Model")
                         with cb:
@@ -357,7 +579,7 @@ if "Run" in page:
                                     pd.DataFrame([{"Parameter": k, "Best Value": str(v),
                                                    "Type": type(v).__name__}
                                                   for k, v in params.items()]),
-                                    use_container_width=True, hide_index=True,
+                                    width="stretch", hide_index=True,
                                 )
                             else:
                                 st.info("No tunable hyperparameters")
@@ -393,7 +615,7 @@ if "Run" in page:
                         })
                         sdf["Mean |SHAP|"] = sdf["Mean |SHAP|"].round(5)
                         st.dataframe(sdf[["Rank","Feature","Mean |SHAP|"]],
-                                     use_container_width=True, hide_index=True)
+                                     width="stretch", hide_index=True)
                         cdf = pd.DataFrame({
                             "Feature":    [t["feature"]    for t in top],
                             "Mean |SHAP|": [t["importance"] for t in top],
@@ -433,7 +655,7 @@ if "Run" in page:
                     st.download_button("⬇️ Download final_ml_code.py",
                                        data=code, file_name="final_ml_code.py",
                                        mime="text/x-python",
-                                       use_container_width=True, type="primary")
+                                       width="stretch", type="primary")
                 else:
                     st.warning("No code generated.")
 
@@ -447,7 +669,7 @@ if "Run" in page:
                     mime = "application/pdf" if ext == ".pdf" else "text/plain"
                     st.download_button(f"⬇️ Download Report ({ext.upper()})",
                                        data=fb, file_name=f"report{ext}",
-                                       mime=mime, use_container_width=True)
+                                       mime=mime, width="stretch")
                 else:
                     st.info("Report not generated yet.")
                 st.divider()
@@ -509,7 +731,7 @@ if "Run" in page:
                              "Clusters Found":      c.get("n_clusters_found","?"),
                              "Noise Pts":           c.get("n_noise_points", 0)}
                             for i, c in enumerate(clustering)]
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
                     if pca_coords and best_labels:
                         st.subheader("🗺️ PCA Cluster Visualization")
@@ -525,7 +747,7 @@ if "Run" in page:
                                              tooltip=["PC1","PC2","Cluster"])
                                      .properties(width="container", height=420)
                                      .interactive())
-                            st.altair_chart(chart, use_container_width=True)
+                            st.altair_chart(chart, width="stretch")
                         except ImportError:
                             st.scatter_chart(pca_df, x="PC1", y="PC2", color="Cluster")
                         pv = results.get("pca_variance", [])
@@ -556,7 +778,7 @@ if "Run" in page:
                                     st.dataframe(
                                         pd.DataFrame([{"Parameter":k,"Best Value":str(v)}
                                                       for k,v in params.items()]),
-                                        use_container_width=True, hide_index=True,
+                                        width="stretch", hide_index=True,
                                     )
                 failed_cls = [c for c in all_cls if c.get("silhouette") is None]
                 if failed_cls:
@@ -585,7 +807,7 @@ if "Run" in page:
                             st.dataframe(
                                 pd.DataFrame([{"Parameter":k,"Best Value":str(v)}
                                               for k,v in dp.items()]),
-                                use_container_width=True, hide_index=True,
+                                width="stretch", hide_index=True,
                             )
                         if pca_coords and best_labels:
                             st.caption(f"PCA scatter — anomalies vs normal ({a['name']})")
@@ -601,7 +823,7 @@ if "Run" in page:
                                                  tooltip=["PC1","PC2","Type"])
                                          .properties(width="container", height=360)
                                          .interactive())
-                                st.altair_chart(chart, use_container_width=True)
+                                st.altair_chart(chart, width="stretch")
                             except ImportError:
                                 adf["Color"] = [1 if t=="Anomaly" else 0 for t in adf["Type"]]
                                 st.scatter_chart(adf, x="PC1", y="PC2", color="Color")
@@ -631,7 +853,7 @@ if "Run" in page:
                                                        "Z-Score":      d["z_score"],
                                                        "Direction":    d["direction"]}
                                                       for d in defs]),
-                                        use_container_width=True, hide_index=True,
+                                        width="stretch", hide_index=True,
                                     )
                             with p2:
                                 cm = cl.get("categorical_modes", {})
@@ -640,7 +862,7 @@ if "Run" in page:
                                     st.dataframe(
                                         pd.DataFrame([{"Feature":k,"Most Common":v}
                                                       for k,v in cm.items()]),
-                                        use_container_width=True, hide_index=True,
+                                        width="stretch", hide_index=True,
                                     )
                     fs = cp.get("feature_summary", {})
                     if fs:
@@ -648,10 +870,10 @@ if "Run" in page:
                         try:
                             st.dataframe(
                                 pd.DataFrame(fs).T.style.format("{:.3f}", na_rep="N/A"),
-                                use_container_width=True,
+                                width="stretch",
                             )
                         except Exception:
-                            st.dataframe(pd.DataFrame(fs).T, use_container_width=True)
+                            st.dataframe(pd.DataFrame(fs).T, width="stretch")
                 else:
                     st.info("Cluster profiles not available for this run.")
 
@@ -667,7 +889,7 @@ if "Run" in page:
                     st.download_button("⬇️ Download final_unsupervised_code.py",
                                        data=code, file_name="final_unsupervised_code.py",
                                        mime="text/x-python",
-                                       use_container_width=True, type="primary")
+                                       width="stretch", type="primary")
                 else:
                     st.warning("No code generated.")
 
@@ -679,7 +901,7 @@ if "Run" in page:
                     mime = "application/pdf" if ext == ".pdf" else "text/plain"
                     st.download_button(f"⬇️ Download ({ext.upper()})",
                                        data=fb, file_name=f"report{ext}",
-                                       mime=mime, use_container_width=True)
+                                       mime=mime, width="stretch")
                 else:
                     st.info("No report yet.")
                 st.divider()
@@ -762,7 +984,7 @@ elif "Notebook" in page:
                                 if n_a is not None:
                                     row["Anomalies"] = n_a
                                 rows.append(row)
-                            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                     else:
                         ml   = "Accuracy" if task == "classification" else "RMSE"
                         mdat = [m for m in er.get("models",[]) if m.get("score") is not None]
@@ -771,7 +993,7 @@ elif "Notebook" in page:
                                 pd.DataFrame([{"Model": m["name"],
                                                f"{ml} (CV-5)": round(m["score"],4)}
                                               for m in mdat]),
-                                use_container_width=True, hide_index=True,
+                                width="stretch", hide_index=True,
                             )
 
                 if exp.get("insight"):
@@ -790,3 +1012,4 @@ elif "Notebook" in page:
         if st.button("🗑️ Clear All Experiments", type="secondary"):
             clear_all_experiments()
             st.rerun()
+

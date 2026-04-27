@@ -62,6 +62,8 @@ def profile_clusters(
     """
     labels_arr = np.array(labels)
     n_total    = len(labels_arr)
+    if n_total == 0:
+        return []
 
     # Work only with feature columns that exist in the original df
     available  = [c for c in feature_names if c in df_original.columns]

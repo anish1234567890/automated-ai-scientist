@@ -50,6 +50,28 @@ def run_health_check(df: pd.DataFrame, task: Optional[str] = None) -> dict:
     penalty = 0   # deducted from 100
 
     n_rows, n_cols = df.shape
+    if n_rows == 0:
+        return {
+            "score": 0,
+            "grade": "D",
+            "issues": [{
+                "check": "empty_dataset",
+                "severity": "high",
+                "message": "Dataset has 0 rows.",
+            }],
+            "summary": "❌ Dataset is empty.",
+            "stats": {
+                "rows": 0,
+                "columns": n_cols,
+                "numeric_features": 0,
+                "categorical_features": 0,
+                "missing_cells": 0,
+                "missing_pct": 0.0,
+                "duplicate_rows": 0,
+                "memory_mb": round(df.memory_usage(deep=True).sum() / 1e6, 2),
+            },
+        }
+
     has_target     = "target" in df.columns
     feature_cols   = [c for c in df.columns if c != "target"]
 

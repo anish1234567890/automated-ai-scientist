@@ -469,7 +469,9 @@ def run_unsupervised(data_path: str, selected_algos: list,
     for c in save_r.get("clustering", []):
         c.pop("labels", None)
 
-    os.makedirs(os.path.dirname(result_path), exist_ok=True)
+    _result_dir = os.path.dirname(result_path)
+    if _result_dir:
+        os.makedirs(_result_dir, exist_ok=True)
     with open(result_path, "w") as f:
         json.dump(save_r, f, indent=4)
 

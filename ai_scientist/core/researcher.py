@@ -4,13 +4,23 @@ import time
 from dotenv import load_dotenv
 
 load_dotenv()
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    timeout=60.0,
-    max_retries=3,
-)
 
 MODEL = "llama-3.3-70b-versatile"
+
+# ── Lazy client — created on first call so missing key doesn't crash import ──
+_groq_client = None
+
+def _get_client():
+    global _groq_client
+    if _groq_client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Add it to your .env file "
+                "or set the environment variable before running."
+            )
+        _groq_client = Groq(api_key=api_key, timeout=60.0, max_retries=3)
+    return _groq_client
 
 
 def _call_groq(messages: list, max_tokens: int = 512) -> str:
@@ -18,7 +28,7 @@ def _call_groq(messages: list, max_tokens: int = 512) -> str:
     last_err = None
     for attempt in range(3):
         try:
-            chat = client.chat.completions.create(
+            chat = _get_client().chat.completions.create(
                 messages=messages,
                 model=MODEL,
                 max_tokens=max_tokens,
@@ -115,40 +125,6 @@ Random Forest, XGBoost, LightGBM, Gradient Boosting
     return [m.strip() for m in text.split(",") if m.strip()]
 
 
-def generate_insight(results: dict, user_prompt: str) -> str:
-    """LLM analyzes supervised experiment results and generates scientific insight."""
-    task   = results.get("task", "unknown")
-    metric = "Accuracy" if task == "classification" else "RMSE"
-
-    model_summary = ""
-    for m in results.get("models", []):
-        score     = m.get("score")
-        score_str = f"{score:.4f}" if score is not None else "Failed"
-        params    = m.get("best_params", {})
-        model_summary += f"- {m['name']}: {metric} = {score_str} | Best params: {params}\n"
-
-    prompt = f"""
-You are a senior ML research scientist reviewing AutoML experiment results.
-
-User goal: {user_prompt}
-Task type: {task}
-Metric used: {metric}
-
-Experiment results:
-{model_summary}
-
-Write a 5-6 sentence scientific analysis covering:
-1. Which model performed best and a likely reason why
-2. What the best hyperparameter values suggest about the data structure
-3. One specific actionable recommendation to improve results further
-4. Whether there are signs of overfitting or underfitting based on the scores
-
-Be specific, technical, and insightful. Write as the AI Scientist agent in first person.
-Do not use bullet points. Write in flowing paragraphs.
-"""
-    return _call_groq([{"role": "user", "content": prompt}], max_tokens=600)
-
-
 # ── UNSUPERVISED ──────────────────────────────────────────────────
 
 def decide_unsupervised_algos(user_prompt: str) -> list:
@@ -191,45 +167,6 @@ K-Means, DBSCAN, Agglomerative
         [{"role": "user", "content": prompt}], max_tokens=100
     ).split(",") if m.strip()]
 
-
-def generate_unsupervised_insight(results: dict, user_prompt: str) -> str:
-    """LLM generates scientific analysis of clustering results."""
-    clustering = results.get("clustering", [])
-
-    summary = ""
-    for c in clustering:
-        sil = c.get("silhouette")
-        dbi = c.get("davies_bouldin")
-        ch  = c.get("calinski_harabasz")
-        n_c = c.get("n_clusters_found", "?")
-        if sil is not None:
-            summary += (f"- {c['name']}: Silhouette={sil:.4f}, "
-                        f"Davies-Bouldin={dbi}, Calinski-Harabasz={ch}, "
-                        f"Clusters found={n_c}, "
-                        f"Best params={c.get('best_params', {})}\n")
-        else:
-            summary += f"- {c['name']}: Failed — {c.get('error', 'unknown')}\n"
-
-    pca_var = results.get("pca_variance", [])
-    prompt  = f"""
-You are a senior ML research scientist reviewing unsupervised learning results.
-
-User goal: {user_prompt}
-PCA explained variance (first components): {pca_var}
-
-Clustering results:
-{summary}
-
-Write a 5-6 sentence scientific analysis covering:
-1. Which algorithm found the best cluster structure and why (based on silhouette score)
-2. What the optimal hyperparameters (e.g. n_clusters, eps) suggest about the data distribution
-3. What the PCA variance explains about the data's dimensionality
-4. One actionable recommendation: should the user try more clusters, different preprocessing, or a different algorithm?
-5. Whether DBSCAN found meaningful density-based groups or if the data is globular (favoring K-Means/GMM)
-
-Be specific and technical. Write as the AI Scientist in first person. Flowing paragraphs, no bullet points.
-"""
-    return _call_groq([{"role": "user", "content": prompt}], max_tokens=600)
 
 # ── V3 ADDITIONS ──────────────────────────────────────────────────
 

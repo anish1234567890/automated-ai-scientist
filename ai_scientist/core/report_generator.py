@@ -1,205 +1,348 @@
 import os
-from datetime import datetime
-
-
-def _get_report_path():
-    from config import REPORT_PATH
-    return REPORT_PATH
-
 
 try:
     from fpdf import FPDF
-    FPDF_AVAILABLE = True
+    _FPDF_AVAILABLE = True
 except ImportError:
-    FPDF_AVAILABLE = False
-    FPDF = object   # dummy base so class definition never crashes at import
+    FPDF = object          # dummy base — class definition will not crash
+    _FPDF_AVAILABLE = False
 
 
-class _PDF(FPDF):
+def _get_report_path():
+    try:
+        from config import REPORT_PATH
+        return REPORT_PATH
+    except Exception:
+        return os.path.join("outputs", "report.pdf")
+
+
+def _safe_text(value, default="N/A"):
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def _safe_pdf_text(value, default="N/A"):
+    """Convert to Latin-1 safe text for core FPDF fonts in fpdf2."""
+    text = _safe_text(value, default=default)
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def _as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _iter_dicts(value):
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _safe_score(value, digits=4):
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):.{digits}f}"
+    except Exception:
+        return "N/A"
+
+
+def _safe_delta(value):
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):+.4f}"
+    except Exception:
+        return "N/A"
+
+
+def _safe_minutes(seconds):
+    if seconds is None:
+        return "N/A"
+    try:
+        return f"{float(seconds) / 60.0:.1f} minutes"
+    except Exception:
+        return "N/A"
+
+
+def _normalize_shap_name(name):
+    if not name:
+        return "N/A"
+    name = str(name).strip()
+    if name == "tree":
+        return "TreeExplainer"
+    if name == "linear":
+        return "LinearExplainer"
+    if name == "kernel":
+        return "KernelExplainer"
+    return name
+
+
+def _derive_best_supervised(results):
+    results = _as_dict(results)
+    task = results.get("task", "classification")
+    valid = [m for m in _iter_dicts(results.get("models", [])) if m.get("score") is not None]
+    if not valid:
+        return None, None
+    if task == "classification":
+        best = max(valid, key=lambda x: x["score"])
+    else:
+        best = min(valid, key=lambda x: x["score"])
+    return best.get("name"), best.get("score")
+
+
+def _derive_best_unsupervised(results):
+    results = _as_dict(results)
+    valid = [c for c in _iter_dicts(results.get("clustering", [])) if c.get("silhouette") is not None]
+    if not valid:
+        return None, None
+    best = max(valid, key=lambda x: x["silhouette"])
+    return best.get("name"), best.get("silhouette")
+
+
+class PDFReport(FPDF):
     def header(self):
-        self.set_font("Helvetica", "B", 13)
-        self.set_text_color(20, 20, 20)
-        self.cell(0, 10, "Automated AI Scientist - Experiment Report", align="C", new_x="LMARGIN", new_y="NEXT")
-        self.set_font("Helvetica", "", 9)
-        self.set_text_color(130, 130, 130)
-        self.cell(0, 5, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", align="C", new_x="LMARGIN", new_y="NEXT")
-        self.ln(3)
-        self.set_draw_color(200, 200, 200)
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(4)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font("Helvetica", "I", 8)
-        self.set_text_color(150, 150, 150)
-        self.cell(0, 10, f"Page {self.page_no()} | Automated AI Scientist", align="C")
-
-
-    def section(self, title):
-        self.set_font("Helvetica", "B", 11)
-        self.set_text_color(30, 70, 150)
-        self.ln(3)
-        self.cell(0, 8, title, new_x="LMARGIN", new_y="NEXT")
-        self.set_draw_color(30, 70, 150)
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(3)
-        self.set_text_color(30, 30, 30)
-
-    def body(self, text):
-        self.set_font("Helvetica", "", 10)
-        self.set_text_color(50, 50, 50)
-        self.multi_cell(0, 6, text)
+        self.set_font("Helvetica", "B", 14)
+        self.cell(0, 10, "Automated AI Scientist Report", ln=True, align="C")
         self.ln(2)
 
-    def row(self, label, value, highlight=False):
-        self.set_font("Helvetica", "B", 10)
-        fill_color = (225, 240, 255) if highlight else (245, 245, 245)
-        self.set_fill_color(*fill_color)
-        self.cell(70, 7, label, border=1, fill=True)
+    def section_title(self, title):
+        self.set_font("Helvetica", "B", 12)
+        self.cell(0, 8, title, ln=True)
+        self.ln(1)
+
+    def body_text(self, text):
         self.set_font("Helvetica", "", 10)
-        self.cell(0, 7, str(value), border=1, fill=highlight, new_x="LMARGIN", new_y="NEXT")
+        self.multi_cell(0, 6, _safe_pdf_text(text, default="N/A"))
+        self.ln(1)
+
+    def kv_row(self, label, value, label_w=60):
+        self.set_font("Helvetica", "B", 10)
+        self.cell(label_w, 7, _safe_pdf_text(label, default=""), border=1)
+        self.set_font("Helvetica", "", 10)
+        self.cell(0, 7, _safe_pdf_text(value), border=1, ln=True)
+
+    def table_header(self, headers, widths):
+        self.set_font("Helvetica", "B", 9)
+        for h, w in zip(headers, widths):
+            self.cell(w, 7, _safe_pdf_text(h, default=""), border=1, align="C")
+        self.ln()
+
+    def table_row(self, values, widths):
+        self.set_font("Helvetica", "", 9)
+        row_height = 7
+        start_x = self.get_x()
+        start_y = self.get_y()
+
+        max_lines = 1
+        normalized = []
+        for value, width in zip(values, widths):
+            text = _safe_pdf_text(value)
+            normalized.append(text)
+            lines = max(1, len(text) // max(1, int(width / 2.5)) + 1)
+            max_lines = max(max_lines, lines)
+
+        row_h = row_height * max_lines
+        x = start_x
+        y = start_y
+
+        for text, width in zip(normalized, widths):
+            self.rect(x, y, width, row_h)
+            self.set_xy(x + 1, y + 1)
+            self.multi_cell(width - 2, row_height - 1, text, border=0)
+            x += width
+
+        self.set_xy(start_x, start_y + row_h)
+
+    def spacer(self, h=2):
+        self.ln(h)
 
 
-def _safe(text: str) -> str:
-    """Strip characters outside Latin-1 range so Helvetica never crashes."""
-    return text.encode("latin-1", errors="replace").decode("latin-1")
+def generate_pdf_report(
+    results,
+    insight,
+    user_prompt,
+    mode="supervised",
+    round1_score=None,
+    round1_model=None,
+    round2_score=None,
+    round2_model=None,
+    delta=None,
+    shap_explainer=None,
+    ensemble_score=None,
+    health_grade=None,
+    experiment_time_sec=None,
+    dataset_name=None,
+    features_added=None,
+):
+    report_path = _safe_text(_get_report_path(), default=os.path.join("outputs", "report.pdf"))
+    if report_path == "N/A":
+        report_path = os.path.join("outputs", "report.pdf")
 
+    report_dir = os.path.dirname(report_path)
+    if report_dir:
+        os.makedirs(report_dir, exist_ok=True)
 
-def generate_pdf_report(results: dict, insight: str, user_prompt: str, mode: str = 'supervised') -> str:
-    """
-    Generate a PDF experiment report.
-    Falls back to a .txt file if fpdf2 is not installed.
-    Returns the path of the saved file.
-    """
-    report_path = _get_report_path()
-    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    results = _as_dict(results)
 
-    task   = results.get("task", "unknown")
-    metric = "Accuracy" if task == "classification" else "RMSE"
+    task = results.get("task", "unknown")
+    dataset_shape = results.get("dataset_shape", [])
 
-    # ── Fallback: plain text ──────────────────────────────────────
-    if not FPDF_AVAILABLE:
+    if mode == "supervised":
+        derived_model, derived_score = _derive_best_supervised(results)
+    else:
+        derived_model, derived_score = _derive_best_unsupervised(results)
+
+    if round1_model is None:
+        round1_model = derived_model
+    if round1_score is None:
+        round1_score = derived_score
+
+    if delta is None and round1_score is not None and round2_score is not None:
+        try:
+            delta = float(round2_score) - float(round1_score)
+        except Exception:
+            delta = None
+
+    shap_info = _as_dict(results.get("shap"))
+    ensemble_info = _as_dict(results.get("ensemble"))
+
+    if shap_explainer is None:
+        shap_explainer = _normalize_shap_name(shap_info.get("explainer_type"))
+    else:
+        shap_explainer = _normalize_shap_name(shap_explainer)
+
+    if ensemble_score is None:
+        ensemble_score = ensemble_info.get("cv_score")
+
+    if features_added is None:
+        features_added = 0
+
+    if not _FPDF_AVAILABLE:
         txt_path = report_path.replace(".pdf", ".txt")
+        _dir = os.path.dirname(txt_path)
+        if _dir:
+            os.makedirs(_dir, exist_ok=True)
         with open(txt_path, "w", encoding="utf-8") as f:
-            f.write("=" * 60 + "\n")
-            f.write("AUTOMATED AI SCIENTIST - EXPERIMENT REPORT\n")
-            f.write(f"Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("=" * 60 + "\n\n")
-            f.write(f"User Prompt   : {user_prompt}\n")
-            f.write(f"Mode          : {mode.upper()}\n")
-            f.write(f"Dataset Shape : {results.get('dataset_shape', 'N/A')}\n\n")
-            if mode == "unsupervised":
-                f.write("CLUSTERING RESULTS:\n")
-                for c in results.get("clustering", []):
-                    sil = c.get("silhouette")
-                    s   = f"{sil:.4f}" if sil is not None else "Failed"
-                    f.write(f"  {c['name']:25s} Silhouette: {s}  Params: {c.get('best_params', {})}\n")
-            else:
-                f.write("MODEL RESULTS:\n")
-                for m in results.get("models", []):
-                    score = m.get("score")
-                    s_str = f"{score:.4f}" if score is not None else "Failed"
-                    f.write(f"  {m['name']:25s} {metric}: {s_str}  Params: {m.get('best_params', {})}\n")
-            f.write(f"\nAI INSIGHTS:\n{insight}\n")
+            f.write("Automated AI Scientist Report\n")
+            f.write(f"Mode: {mode} | Task: {task}\n")
+            f.write(f"Dataset Shape: {dataset_shape}\n")
+            f.write(f"Insight: {insight}\n")
+            f.write(f"Round 1 Best: {round1_model} ({_safe_score(round1_score)})\n")
+            f.write(f"Round 2 Best: {round2_model} ({_safe_score(round2_score)})\n")
+            f.write(f"Delta: {_safe_delta(delta)}\n")
+            f.write(f"SHAP: {shap_explainer} | Ensemble: {_safe_score(ensemble_score)}\n")
+            f.write(f"Health Grade: {health_grade} | Features Added: {features_added}\n")
+            f.write(f"Run Time: {_safe_minutes(experiment_time_sec)}\n")
+        print(f"Saved text report to {txt_path} (fpdf2 not installed)")
         return txt_path
 
-    # ── Unsupervised PDF ──────────────────────────────────────────
-    if mode == "unsupervised":
-        pdf = _PDF()
-        pdf.add_page()
-
-        pdf.section("1. Experiment Overview")
-        pdf.row("User Prompt",    _safe(user_prompt))
-        pdf.row("Mode",           "UNSUPERVISED LEARNING")
-        pdf.row("Dataset Shape",  str(results.get("dataset_shape", "N/A")))
-        pdf.row("Trials / Algo",  str(results.get("n_trials_per_algo", 20)))
-        pdf.row("PCA Variance",   str(results.get("pca_variance", [])))
-        pdf.row("Timestamp",      datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        pdf.ln(3)
-
-        pdf.section("2. Algorithm Leaderboard (Silhouette Score)")
-        for i, c in enumerate(results.get("clustering", [])):
-            sil = c.get("silhouette")
-            s   = f"{sil:.4f}" if sil is not None else "Failed"
-            n_c = c.get("n_clusters_found", "?")
-            pdf.row(_safe(f"#{i+1}  {c['name']}"),
-                    f"Silhouette: {s}  |  Clusters found: {n_c}",
-                    highlight=(i == 0))
-        pdf.ln(3)
-
-        pdf.section("3. Best Hyperparameters (Optuna Tuning)")
-        for c in results.get("clustering", []):
-            params = {k: v for k, v in c.get("best_params", {}).items()
-                      if k not in ("anomalies_found", "outliers_found")}
-            if params:
-                pdf.set_font("Helvetica", "B", 10)
-                pdf.cell(0, 7, _safe(c["name"]), new_x="LMARGIN", new_y="NEXT")
-                pdf.set_font("Helvetica", "", 9)
-                for k, v in params.items():
-                    pdf.cell(0, 6, _safe(f"    {k}: {v}"), new_x="LMARGIN", new_y="NEXT")
-                dbi = c.get("davies_bouldin")
-                ch  = c.get("calinski_harabasz")
-                if dbi: pdf.cell(0, 6, f"    Davies-Bouldin Index: {dbi:.4f}  (lower=better)", new_x="LMARGIN", new_y="NEXT")
-                if ch:  pdf.cell(0, 6, f"    Calinski-Harabasz: {ch:.2f}  (higher=better)", new_x="LMARGIN", new_y="NEXT")
-                pdf.ln(2)
-
-        pdf.section("4. AI Scientific Insights")
-        pdf.body(_safe(insight))
-
-        pdf.section("5. System Information")
-        pdf.body(
-            "Algorithms were selected by the LLM researcher agent (Llama 3.3 70B via Groq). "
-            "Hyperparameters were tuned by Optuna TPE sampler. "
-            "Silhouette Score is the primary metric (higher = better cluster separation). "
-            "PCA was used to reduce dimensionality for visualization."
-        )
-
-        pdf.output(report_path)
-        return report_path
-
-    # ── PDF report ────────────────────────────────────────────────
-    pdf = _PDF()
+    pdf = PDFReport()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # 1. Overview
-    pdf.section("1. Experiment Overview")
-    pdf.row("User Prompt",    _safe(user_prompt))
-    pdf.row("Task Type",      task.upper())
-    pdf.row("Dataset Shape",  str(results.get("dataset_shape", "N/A")))
-    pdf.row("Trials / Model", str(results.get("n_trials_per_model", 25)))
-    pdf.row("Timestamp",      datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    pdf.ln(3)
+    # 1. Experiment Overview
+    pdf.section_title("1. Experiment Overview")
+    pdf.kv_row("Mode", mode)
+    pdf.kv_row("Task", task)
+    pdf.kv_row("Dataset Shape", str(dataset_shape))
+    pdf.kv_row("User Prompt", user_prompt)
+    pdf.spacer()
 
-    # 2. Leaderboard
-    pdf.section("2. Model Leaderboard")
-    for i, m in enumerate(results.get("models", [])):
-        score = m.get("score")
-        score_str = f"{score:.4f}" if score is not None else "Failed"
-        pdf.row(_safe(f"#{i+1}  {m['name']}"), f"{metric}: {score_str}", highlight=(i == 0))
-    pdf.ln(3)
+    # 2. Results
+    pdf.section_title("2. Results")
+    if mode == "supervised":
+        headers = ["Model", "Score", "Trials", "Best Params"]
+        widths = [42, 24, 22, 102]
+        pdf.table_header(headers, widths)
 
-    # 3. Best Hyperparameters
-    pdf.section("3. Best Hyperparameters (Optuna Tuning)")
-    for m in results.get("models", []):
-        if m.get("best_params"):
+        for m in _iter_dicts(results.get("models", [])):
+            score = _safe_score(m.get("score"))
+            trials = _safe_text(m.get("n_trials"), default="-")
+            params = _safe_text(m.get("best_params"), default="{}")
+            pdf.table_row([m.get("name", "N/A"), score, trials, params], widths)
+
+        ens = _as_dict(results.get("ensemble"))
+        if ens and not ens.get("error"):
+            models_used = ens.get("models_used") if isinstance(ens.get("models_used"), list) else []
+            pdf.spacer()
+            pdf.kv_row("Ensemble Models", ", ".join(str(x) for x in models_used))
+            pdf.kv_row("Ensemble CV Score", _safe_score(ens.get("cv_score")))
+    else:
+        headers = ["Algorithm", "Silhouette", "DB Index", "CH Score", "Best Params"]
+        widths = [38, 24, 24, 28, 76]
+        pdf.table_header(headers, widths)
+
+        for c in _iter_dicts(results.get("clustering", [])):
+            pdf.table_row([
+                c.get("name", "N/A"),
+                _safe_score(c.get("silhouette")),
+                _safe_score(c.get("davies_bouldin")),
+                _safe_score(c.get("calinski_harabasz")),
+                _safe_text(c.get("best_params"), default="{}"),
+            ], widths)
+
+    pdf.spacer()
+
+    # 3. AI Insight
+    pdf.section_title("3. AI Insight")
+    pdf.body_text(insight)
+
+    # 4. Best Parameters / Diagnostics
+    pdf.section_title("4. Best Parameters")
+    if mode == "supervised":
+        for m in _iter_dicts(results.get("models", [])):
             pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(0, 7, _safe(m["name"]), new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 6, _safe_pdf_text(m.get("name")), ln=True)
             pdf.set_font("Helvetica", "", 9)
-            for k, v in m["best_params"].items():
-                pdf.cell(0, 6, _safe(f"    {k}: {v}"), new_x="LMARGIN", new_y="NEXT")
-            pdf.ln(2)
+            pdf.multi_cell(0, 5, _safe_pdf_text(f"Best Params: {_safe_text(m.get('best_params'), '{}')}", default="Best Params: {}"))
+            if m.get("error"):
+                pdf.multi_cell(0, 5, _safe_pdf_text(f"Error: {_safe_text(m.get('error'))}"))
+            pdf.spacer(1)
+    else:
+        for c in _iter_dicts(results.get("clustering", [])):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 6, _safe_pdf_text(c.get("name")), ln=True)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.multi_cell(0, 5, _safe_pdf_text(f"Best Params: {_safe_text(c.get('best_params'), '{}')}", default="Best Params: {}"))
+            if c.get("error"):
+                pdf.multi_cell(0, 5, _safe_pdf_text(f"Error: {_safe_text(c.get('error'))}"))
+            pdf.spacer(1)
 
-    # 4. AI Insights
-    pdf.section("4. AI Scientific Insights")
-    pdf.body(_safe(insight))
+    # 5. Final Code
+    pdf.section_title("5. Final Code")
+    final_code = results.get("final_code", "N/A")
+    pdf.set_font("Courier", "", 7)
+    pdf.multi_cell(0, 4, _safe_pdf_text(final_code))
+    pdf.spacer()
 
-    # 5. System note
-    pdf.section("5. System Information")
-    pdf.body(
-        "Models were selected by the LLM researcher agent (Llama 3.3 70B via Groq) based on the "
-        "user's natural language instruction. Hyperparameter tuning was performed by Optuna using "
-        "the TPE (Tree-structured Parzen Estimator) sampler. Results are sorted by best score."
-    )
+    # 6. Paper Values Summary
+    pdf.section_title("6. Paper Values Summary")
+    pdf.kv_row("Dataset Name", dataset_name)
+    pdf.kv_row("Task Type", task)
+    pdf.kv_row("Round 1 Best Model", round1_model)
+    pdf.kv_row("Round 1 Best Score", _safe_score(round1_score))
+    pdf.kv_row("Round 2 Best Model", round2_model)
+    pdf.kv_row("Round 2 Best Score", _safe_score(round2_score))
+    pdf.kv_row("Improvement Delta", _safe_delta(delta))
+    pdf.kv_row("SHAP Explainer Used", shap_explainer)
+    pdf.kv_row("Ensemble Score", _safe_score(ensemble_score))
+    pdf.kv_row("Health Grade", health_grade)
+    pdf.kv_row("Features Added", str(features_added) if features_added is not None else "N/A")
+    pdf.kv_row("Total Run Time", _safe_minutes(experiment_time_sec))
 
-    pdf.output(report_path)
-    return report_path
+    try:
+        pdf.output(report_path)
+        print(f"Saved PDF report to {report_path}")
+        return report_path
+    except Exception as e:
+        fallback_path = os.path.join("outputs", "report_fallback.pdf")
+        try:
+            os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
+            pdf.output(fallback_path)
+            print(f"Saved PDF report to fallback path {fallback_path} (original error: {e})")
+            return fallback_path
+        except Exception as e2:
+            print(f"Failed to save PDF report (primary and fallback failed): {e2}")
+            return report_path

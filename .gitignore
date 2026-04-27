@@ -1,7 +1,8 @@
-venv/
-.env
 outputs/
 __pycache__/
 *.pyc
 .streamlit/
 test.py
+me/
+.env
+catboost_info/

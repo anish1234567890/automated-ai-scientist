@@ -9,6 +9,7 @@ Returns a single dict with ALL keys the UI expects:
 """
 
 import os
+import time
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
@@ -102,6 +103,9 @@ def run_ai_scientist(
 def _supervised_pipeline(df, user_prompt, health, task_guess,
                           n_trials, enable_fe, enable_si, logs, log):
 
+    import time as _time
+    _start_time = _time.time()
+
     # ── 3. Model selection ────────────────────────────────────────
     log("🧠 Researcher agent deciding models...")
     selected_models = decide_models(user_prompt, df)
@@ -131,7 +135,8 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
                 fe_result = fe
                 added = [f["name"] for f in fe["new_features"] if f["status"] == "added"]
                 logs.append(f"🔧 {fe['n_added']} new features: {', '.join(added[:5])}")
-                enriched = DATA_PATH.replace(".csv", "_enriched.csv")
+                _base, _ext = os.path.splitext(DATA_PATH)
+                enriched = _base + "_enriched" + (_ext or ".csv")
                 df_train.to_csv(enriched, index=False)
                 train_path = enriched
             else:
@@ -142,10 +147,13 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
         logs.append("🔧 Feature engineering: skipped")
 
     # ── 6. AutoML Round 1 ─────────────────────────────────────────
-    log("⚙️ AutoML Round 1 (Optuna + 5-fold CV)...")
+    log("⚙️ AutoML Round 1 (Optuna + 3-fold CV, poly+select hoisted)...")
 
-    def _prog(name, i, total):
-        log(f"⚙️ Tuning [{i}/{total}]: {name}")
+    def _prog(name, i=None, total=None):
+        if i is not None and total is not None:
+            log(f"⚙️ Tuning [{i}/{total}]: {name}")
+        else:
+            log(f"   {name}")
 
     r1 = run_automl(train_path, selected_models, RESULT_PATH, n_trials, _prog)
 
@@ -166,21 +174,31 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
         logs.append(f"   🤝 Ensemble: {metric}={ens.get('cv_score','?')}")
 
     # ── 7. SHAP ───────────────────────────────────────────────────
+    # SHAP runs ONLY on the best model (the first in the sorted leaderboard).
+    # selected_feature_names from run_automl gives the post-poly/select names
+    # so SHAP correctly describes which transformed features matter.
     log("🔍 Computing SHAP feature importance...")
     shap_result = {}
     try:
-        X_p = preprocess(df_train.drop("target", axis=1))
-        y_p = df_train["target"].copy()
+        target_col = "target" if "target" in df_train.columns else df_train.columns[-1]
+        X_p = preprocess(df_train.drop(columns=[target_col]))
+        y_p = df_train[target_col].copy()
         if y_p.dtype == "object":
             y_p = pd.Series(LabelEncoder().fit_transform(y_p))
-        shap_result = run_shap_for_best_model(r1, X_p, y_p, task)
-        if not shap_result.get("error"):
-            top3 = shap_result.get("top_features", [])[:3]
-            logs.append("🔍 SHAP top: " + ", ".join(
-                f"{t['feature']}({t['importance']:.4f})" for t in top3))
-            r1["shap"] = shap_result
+
+        # Only call SHAP once on the single best model (valid[0])
+        valid_models = [m for m in r1.get("models", []) if m.get("score") is not None]
+        if not valid_models:
+            logs.append("   ⚠️ SHAP: No valid models to explain")
         else:
-            logs.append(f"   ⚠️ SHAP: {shap_result['error']}")
+            shap_result = run_shap_for_best_model(r1, X_p, y_p, task)
+            if not shap_result.get("error"):
+                top3 = shap_result.get("top_features", [])[:3]
+                logs.append("🔍 SHAP top: " + ", ".join(
+                    f"{t['feature']}({t['importance']:.4f})" for t in top3))
+                r1["shap"] = shap_result
+            else:
+                logs.append(f"   ⚠️ SHAP: {shap_result['error']}")
     except Exception as e:
         logs.append(f"   ⚠️ SHAP failed: {e}")
 
@@ -204,8 +222,22 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
             for ch in round2_config.get("changes_applied", []):
                 logs.append(f"   {ch}")
 
+            train_path_r2 = train_path
+            cols_to_drop = round2_config.get("drop_columns", [])
+            if cols_to_drop:
+                drop_existing = [
+                    c for c in cols_to_drop
+                    if c in df_train.columns and c != "target"
+                ]
+                if drop_existing:
+                    df_r2 = df_train.drop(columns=drop_existing)
+                    _base, _ext = os.path.splitext(train_path)
+                    train_path_r2 = _base + "_r2" + (_ext or ".csv")
+                    df_r2.to_csv(train_path_r2, index=False)
+                    logs.append(f"🎯 Round 2 dropped columns: {', '.join(drop_existing[:8])}")
+
             log("⚙️ AutoML Round 2 (auto-improved)...")
-            r2 = run_automl(train_path, round2_config["selected_models"],
+            r2 = run_automl(train_path_r2, round2_config["selected_models"],
                             RESULT_PATH, round2_config["n_trials"], _prog)
 
             if "error" not in r2:
@@ -223,8 +255,8 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
                     sr2 = run_shap_for_best_model(r2, X_p, y_p, task)
                     if not sr2.get("error"):
                         r2["shap"] = sr2
-                except Exception:
-                    pass
+                except Exception as e:
+                    logs.append(f"⚠️ Round 2 SHAP failed: {e}")
             else:
                 logs.append(f"   ⚠️ Round 2 failed: {r2['error']}")
                 r2 = None
@@ -246,8 +278,40 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
     logs.append(f"\n🔬 Insight: {insight[:120]}...")
 
     # ── 10. Save + Report ─────────────────────────────────────────
+    _elapsed = _time.time() - _start_time
+    _dataset_name = os.path.splitext(os.path.basename(DATA_PATH))[0]
+    _health_grade = health.get("grade")
+    _features_added = fe_result.get("n_added", 0)
+    _shap_expl = (shap_result or {}).get("explainer_type")
+    _ensemble = r1.get("ensemble") or {}
+    _ens_score = _ensemble.get("cv_score")
+    if _ens_score is None:
+        _ens_score = _ensemble.get("score")
+    if _ens_score is None:
+        _ens_score = r1.get("ensemble_score")
+    _r1b = max(
+        [m for m in r1.get("models", []) if m.get("score") is not None],
+        key=lambda x: x["score"], default={}
+    ) if r1.get("task") == "classification" else min(
+        [m for m in r1.get("models", []) if m.get("score") is not None],
+        key=lambda x: x["score"], default={}
+    )
+    _r1_model = _r1b.get("name")
+    _r1_score = _r1b.get("score")
+    _r2b = round_comparison.get("round2_best", {}) if r2 else {}
+    _r2_model = _r2b.get("name") if r2 else None
+    _r2_score = _r2b.get("score") if r2 else None
+    _delta = round_comparison.get("delta") if r2 else None
     log("📓 Saving to lab notebook...")
-    save_experiment(user_prompt, r1, insight, selected_models, mode="supervised")
+    save_experiment(
+        user_prompt, r1, insight, selected_models, mode="supervised",
+        round1_score=_r1_score, round1_model=_r1_model,
+        round2_score=_r2_score, round2_model=_r2_model,
+        delta=_delta, shap_explainer=_shap_expl,
+        ensemble_score=_ens_score, health_grade=_health_grade,
+        experiment_time_sec=_elapsed, dataset_name=_dataset_name,
+        features_added=_features_added,
+    )
     if r2 and "error" not in r2:
         save_experiment(
             user_prompt + " [v3 Round 2]", r2,
@@ -260,7 +324,18 @@ def _supervised_pipeline(df, user_prompt, health, task_guess,
     log("📄 Generating PDF report...")
     try:
         report_path = generate_pdf_report(
-            r1, insight, user_prompt, mode="supervised"
+            r1, insight, user_prompt, mode="supervised",
+            dataset_name=_dataset_name,
+            health_grade=_health_grade,
+            round1_score=_r1_score,
+            round1_model=_r1_model,
+            round2_score=_r2_score,
+            round2_model=_r2_model,
+            delta=_delta,
+            shap_explainer=_shap_expl,
+            ensemble_score=_ens_score,
+            experiment_time_sec=_elapsed,
+            features_added=_features_added,
         )
     except Exception as e:
         logs.append(f"   ⚠️ PDF failed: {e}")

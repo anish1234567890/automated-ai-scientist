@@ -190,8 +190,10 @@ def build_improved_experiment(
     drop_columns = []
     if plan.get("focus_on_top_features") and shap_result and not shap_result.get("error"):
         top_feats = [t["feature"] for t in shap_result.get("top_features", [])[:5]]
-        if top_feats:
-            drop_columns = []   # will be resolved in app.py using full feature list
+        all_features = shap_result.get("feature_names", [])
+        if top_feats and all_features:
+            top_set = set(top_feats)
+            drop_columns = [c for c in all_features if c not in top_set]
             changes.append(f"🎯 Focusing on top SHAP features: {', '.join(top_feats)}")
 
     # Revised prompt

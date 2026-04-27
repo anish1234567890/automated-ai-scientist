@@ -74,7 +74,8 @@ def _safe_eval_feature(df: pd.DataFrame, expr: str) -> Optional[pd.Series]:
         result = eval(expr, {"__builtins__": {}}, namespace)
         if isinstance(result, pd.Series):
             result = result.replace([np.inf, -np.inf], np.nan)
-            result = result.fillna(result.median())
+            _med = result.median()
+            result = result.fillna(_med if pd.notna(_med) else 0.0)
             return result
         return None
     except Exception:

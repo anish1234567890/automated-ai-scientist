@@ -115,7 +115,14 @@ def _resolve_model_name(user_name: str) -> str:
     return n
 
 
-def _make_objective(model_name: str, task: str, X, y):
+def _make_objective(model_name: str, task: str, X_transformed, y, n_selected_features: int):
+    """
+    Speed fix (A1+A2+A3):
+      - PolynomialFeatures and SelectKBest are computed ONCE here (before Optuna loop)
+      - Objective receives the already-transformed X_transformed array
+      - CV reduced from 5 → 3 folds (saves 40% wall-clock per trial)
+      - Each trial only fits the model, nothing else
+    """
     name = model_name.lower().strip()
 
     def objective(trial):
@@ -124,25 +131,13 @@ def _make_objective(model_name: str, task: str, X, y):
             return 0.0 if task == "classification" else 1e9
 
         try:
-            steps = [
-                ("poly", PolynomialFeatures(degree=2, include_bias=False)),
-            ]
-
-            k = max(10, int(0.3 * X.shape[1]))
             if task == "classification":
-                steps.append(("select", SelectKBest(f_classif, k=k)))
-            else:
-                steps.append(("select", SelectKBest(f_regression, k=k)))
-
-            steps.append(("model", model))
-
-            pipeline = Pipeline(steps)
-
-            if task == "classification":
-                return cross_val_score(pipeline, X, y, cv=5, scoring="accuracy").mean()
+                return cross_val_score(
+                    model, X_transformed, y, cv=3, scoring="accuracy"
+                ).mean()
             else:
                 score = cross_val_score(
-                    pipeline, X, y, cv=5,
+                    model, X_transformed, y, cv=3,
                     scoring="neg_root_mean_squared_error"
                 ).mean()
                 return -score
@@ -159,8 +154,8 @@ def _build_model(trial, name: str, task: str):
 
     if "random forest" in name:
         p = {
-            "n_estimators":      trial.suggest_int("n_estimators", 50, 400),
-            "max_depth":         trial.suggest_int("max_depth", 3, 25),
+            "n_estimators":      trial.suggest_int("n_estimators", 50, 200),
+            "max_depth":         trial.suggest_int("max_depth", 3, 15),
             "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
             "min_samples_leaf":  trial.suggest_int("min_samples_leaf", 1, 8),
             "max_features":      trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
@@ -170,34 +165,33 @@ def _build_model(trial, name: str, task: str):
     elif "xgboost" in name:
         if not XGBOOST_AVAILABLE: return None
         p = {
-            "n_estimators":     trial.suggest_int("n_estimators", 50, 400),
-            "learning_rate":    trial.suggest_float("learning_rate", 0.01, 0.3),
-            "max_depth":        trial.suggest_int("max_depth", 3, 12),
-            "subsample":        trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-            "reg_alpha":        trial.suggest_float("reg_alpha", 1e-5, 1.0, log=True),
-            "reg_lambda":       trial.suggest_float("reg_lambda", 1e-5, 1.0, log=True),
+            "n_estimators":     trial.suggest_int("n_estimators", 50, 200),
+            "learning_rate":    trial.suggest_float("learning_rate", 0.05, 0.3),
+            "max_depth":        trial.suggest_int("max_depth", 3, 8),
+            "subsample":        trial.suggest_float("subsample", 0.6, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+            "reg_lambda":       trial.suggest_float("reg_lambda", 1e-3, 1.0, log=True),
         }
         return (XGBClassifier if is_cls else XGBRegressor)(**p, random_state=42, verbosity=0, n_jobs=-1)
 
     elif "lightgbm" in name or "lgbm" in name:
         if not LIGHTGBM_AVAILABLE: return None
         p = {
-            "n_estimators":   trial.suggest_int("n_estimators", 50, 400),
-            "learning_rate":  trial.suggest_float("learning_rate", 0.01, 0.3),
-            "max_depth":      trial.suggest_int("max_depth", 3, 12),
-            "num_leaves":     trial.suggest_int("num_leaves", 20, 150),
-            "subsample":      trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+            "n_estimators":     trial.suggest_int("n_estimators", 50, 200),
+            "learning_rate":    trial.suggest_float("learning_rate", 0.05, 0.3),
+            "max_depth":        trial.suggest_int("max_depth", 3, 8),
+            "num_leaves":       trial.suggest_int("num_leaves", 20, 80),
+            "subsample":        trial.suggest_float("subsample", 0.6, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
         }
         return (LGBMClassifier if is_cls else LGBMRegressor)(**p, random_state=42, n_jobs=-1, verbose=-1)
 
     elif "catboost" in name:
         if not CATBOOST_AVAILABLE: return None
         p = {
-            "iterations":   trial.suggest_int("iterations", 50, 400),
-            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3),
-            "depth":         trial.suggest_int("depth", 3, 10),
+            "iterations":    trial.suggest_int("iterations", 50, 200),
+            "learning_rate": trial.suggest_float("learning_rate", 0.05, 0.3),
+            "depth":         trial.suggest_int("depth", 3, 8),
             "l2_leaf_reg":   trial.suggest_float("l2_leaf_reg", 1.0, 10.0),
         }
         return (CatBoostClassifier if is_cls else CatBoostRegressor)(**p, random_state=42, verbose=0)
@@ -221,8 +215,8 @@ def _build_model(trial, name: str, task: str):
 
     elif "extra trees" in name:
         p = {
-            "n_estimators":      trial.suggest_int("n_estimators", 50, 400),
-            "max_depth":         trial.suggest_int("max_depth", 3, 25),
+            "n_estimators":      trial.suggest_int("n_estimators", 50, 200),
+            "max_depth":         trial.suggest_int("max_depth", 3, 15),
             "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
             "max_features":      trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
         }
@@ -256,8 +250,8 @@ def _build_model(trial, name: str, task: str):
 
     elif "svm" in name:
         p = {
-            "C":      trial.suggest_float("C", 0.01, 100.0, log=True),
-            "kernel": trial.suggest_categorical("kernel", ["rbf", "linear", "poly"]),
+            "C":      trial.suggest_float("C", 0.01, 10.0, log=True),
+            "kernel": trial.suggest_categorical("kernel", ["rbf", "linear"]),
         }
         if is_cls:
             p["gamma"] = trial.suggest_categorical("gamma", ["scale", "auto"])
@@ -501,14 +495,52 @@ def run_automl(data_path: str, selected_models: list, result_path: str,
 
     task = detect_task(y)
 
+    # ── A1+A2: Hoist polynomial + feature selection ONCE before Optuna ──
+    # This transforms X a single time instead of 25 trials × 3 folds = 75 times.
+    try:
+        n_features = X.shape[1]
+        n_poly = n_features + n_features * (n_features + 1) // 2
+        k = min(n_poly, max(1, int(0.3 * n_poly)))
+
+        poly     = PolynomialFeatures(degree=2, include_bias=False)
+        X_poly   = poly.fit_transform(X)
+
+        score_fn = f_classif if task == "classification" else f_regression
+        selector = SelectKBest(score_fn, k=k)
+        X_sel    = selector.fit_transform(X_poly, y)
+
+        # Recover feature names for SHAP (best effort)
+        try:
+            poly_names   = poly.get_feature_names_out(list(X.columns))
+            support_mask = selector.get_support()
+            selected_feature_names = list(poly_names[support_mask])
+        except Exception:
+            selected_feature_names = [f"f{i}" for i in range(X_sel.shape[1])]
+
+    except Exception as e:
+        # Fallback: use raw X if poly/select fails (e.g. n_features=0)
+        X_sel = X.values
+        selected_feature_names = list(X.columns)
+
     results = {
         "task":               task,
         "models":             [],
         "dataset_shape":      list(df.shape),
         "n_trials_per_model": n_trials,
+        "selected_feature_names": selected_feature_names,
+        "shap":               {},
     }
 
     total = len(selected_models)
+
+    # ── A6: Trial-level progress callback via Optuna callback ──────
+    def _trial_callback(study, trial):
+        if progress_callback and trial.number % 5 == 0 and trial.number > 0:
+            best_val = study.best_value if study.best_value is not None else 0
+            progress_callback(
+                f"  trial {trial.number}/{n_trials}",
+                f"(best so far: {best_val:.4f})"
+            )
 
     for i, model_name in enumerate(selected_models):
         name = _resolve_model_name(model_name)
@@ -531,20 +563,32 @@ def run_automl(data_path: str, selected_models: list, result_path: str,
         if task == "regression"     and any(x in name for x in cls_only): continue
         if task == "classification" and any(x in name for x in reg_only): continue
 
+        # A6: log model start
+        if progress_callback:
+            progress_callback(model_name, i + 1, total)
+
         try:
-            objective = _make_objective(name, task, X, y)
+            # Pass pre-transformed X_sel — no poly/select inside objective
+            objective = _make_objective(name, task, X_sel, y, X_sel.shape[1])
             study = optuna.create_study(
-                direction="maximize",
+                direction="maximize" if task == "classification" else "minimize",
                 pruner=MedianPruner(),
                 sampler=optuna.samplers.TPESampler(seed=42)
             )
-            study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+            # A4: timeout=90s per model prevents UI hangs on slow models
+            study.optimize(
+                objective,
+                n_trials=n_trials,
+                timeout=90,
+                show_progress_bar=False,
+                callbacks=[_trial_callback],
+            )
 
             results["models"].append({
                 "name":        model_name,
                 "score":       round(study.best_value, 6),
                 "best_params": study.best_params,
-                "n_trials":    n_trials,
+                "n_trials":    len(study.trials),
             })
 
         except Exception as e:
@@ -553,27 +597,23 @@ def run_automl(data_path: str, selected_models: list, result_path: str,
                 "best_params": {}, "error": str(e)
             })
 
-        if progress_callback:
-            progress_callback(model_name, i + 1, total)
-
     # Sort leaderboard
     valid   = [m for m in results["models"] if m.get("score") is not None]
     invalid = [m for m in results["models"] if m.get("score") is None]
     valid.sort(key=lambda x: x["score"], reverse=(task == "classification"))
     results["models"] = valid + invalid
 
-    # ── Ensemble (top-3) ──────────────────────────────────────────
+    # ── Ensemble (top-3) — keep cv=5 for ensemble as per spec ─────
     try:
         valid = [m for m in results["models"] if m.get("score") is not None]
-
         reverse = (task == "classification")
         top_models = sorted(valid, key=lambda x: x["score"], reverse=reverse)[:3]
 
         estimators = []
-        for i, m in enumerate(top_models):
+        for j, m in enumerate(top_models):
             model = _build_model(FixedTrial(m["best_params"]), str(m["name"]).lower().strip(), task)
             if model:
-                estimators.append((f"model{i}", model))
+                estimators.append((f"model{j}", model))
 
         if len(estimators) >= 2:
             if task == "classification":
@@ -581,16 +621,9 @@ def run_automl(data_path: str, selected_models: list, result_path: str,
             else:
                 ensemble = VotingRegressor(estimators=estimators)
 
+            # Ensemble uses pre-transformed X_sel, cv=5 kept as per spec
             ensemble_score = cross_val_score(
-                Pipeline([
-                    ("poly", PolynomialFeatures(degree=2, include_bias=False)),
-                    ("select", SelectKBest(
-                        f_classif if task == "classification" else f_regression,
-                        k=min(10, X.shape[1])
-                    )),
-                    ("ensemble", ensemble),
-                ]),
-                X, y, cv=5,
+                ensemble, X_sel, y, cv=5,
                 scoring="accuracy" if task == "classification" else "neg_root_mean_squared_error"
             ).mean()
 
@@ -599,17 +632,20 @@ def run_automl(data_path: str, selected_models: list, result_path: str,
 
             results["ensemble"] = {
                 "models_used": [m["name"] for m in top_models],
-                "cv_score": float(ensemble_score),
+                "cv_score":    float(ensemble_score),
+                "voting":      "soft" if task == "classification" else "hard",
             }
 
     except Exception as e:
-        print("Ensemble failed:", e)
+        results["ensemble"] = {"error": str(e)}
 
     # Generate final code
     results["final_code"] = _generate_final_code(results, data_path)
 
     # Persist
-    os.makedirs(os.path.dirname(result_path), exist_ok=True)
+    _result_dir = os.path.dirname(result_path)
+    if _result_dir:
+        os.makedirs(_result_dir, exist_ok=True)
     with open(result_path, "w") as f:
         json.dump(results, f, indent=4)
 

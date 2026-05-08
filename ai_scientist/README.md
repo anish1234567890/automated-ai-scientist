@@ -1,66 +1,91 @@
-# ai_scientist (Backend Pipeline)
+<!-- v4.0 -->
 
-This folder contains the AAS backend: orchestration, LLM agents, AutoML/unsupervised engines, explainability, self-improvement loop, persistence, and report generation.
+# ⚙️ `ai_scientist` Backend Reference
 
-## Core Modules
+This directory contains the orchestration pipeline (`app.py`), all core agents (`core/`), config (`config.py`), dependencies, and sample data.
 
-1. `automl_engine.py` — supervised model registry, Optuna tuning, CV scoring, ensemble, and final code generation.
-2. `cluster_profiler.py` — cluster profiling and narrative summaries for unsupervised results.
-3. `coder.py` — Groq-based code generator helper module.
-4. `data_health.py` — dataset quality scoring and issue detection.
-5. `feature_engineer.py` — LLM-driven feature suggestion and expression application.
-6. `lab_notebook.py` — SQLite schema, insert/query/export, and experiment history utilities.
-7. `report_generator.py` — PDF report builder with fallback text report path.
-8. `researcher.py` — Groq call wrapper, model/algo decisions, hypothesis, and insight generation.
-9. `self_improve.py` — round-2 improvement planning and round comparison logic.
-10. `shap_explainer.py` — SHAP explainability routing and best-model explanation flow.
-11. `unsupervised_engine.py` — clustering/anomaly optimization, PCA outputs, and unsupervised code generation.
+## 🚀 Install and run standalone
 
-## Environment Setup
+```bash
+pip install -r ai_scientist/requirements.txt
+python ai_scientist/app.py
+```
 
-Create `ai_scientist/.env` and set:
+Set API key in `ai_scientist\.env`:
 
 ```env
 GROQ_API_KEY=your_groq_key
 ```
 
-You can copy from `../.env.example` first.
+## 🧩 Core modules and public functions
 
-## Install
+| Module | Public functions |
+|---|---|
+| `core/automl_engine.py` | `detect_task(y)`, `preprocess(X)`, `run_automl(data_path, selected_models, result_path, n_trials, progress_callback)` |
+| `core/researcher.py` | `decide_models(user_prompt, df=None)`, `decide_unsupervised_algos(user_prompt)`, `generate_hypothesis(...)`, `generate_insight(...)`, `generate_unsupervised_insight(...)` |
+| `core/feature_engineer.py` | `run_feature_engineering(df, task, user_prompt, max_features=8)` |
+| `core/shap_explainer.py` | `compute_shap(model, X_train, X_test, feature_names, model_name, task, max_samples=200)`, `run_shap_for_best_model(results, X, y, task)` |
+| `core/self_improve.py` | `build_improved_experiment(plan, original_prompt, selected_models, n_trials, shap_result)`, `compare_rounds(round1, round2)` |
+| `core/unsupervised_engine.py` | `should_run_unsupervised(df, user_prompt)`, `preprocess_unsupervised(df)`, `compute_pca_2d(X)`, `compute_pca_variance(X)`, `run_unsupervised(data_path, selected_algos, result_path, n_trials=20, progress_callback=None)` |
+| `core/lab_notebook.py` | `init_db()`, `save_experiment(...)`, `get_all_experiments()`, `get_experiment_by_id(exp_id)`, `export_to_csv(output_path=None)`, `print_paper_summary()`, `clear_all_experiments()` |
+| `core/report_generator.py` | `generate_pdf_report(results, insight, user_prompt, mode='supervised', ...)` |
+| `core/data_health.py` | `run_health_check(df, task=None)` |
+| `core/cluster_profiler.py` | `profile_clusters(df_original, labels, feature_names, algo_name='')`, `generate_cluster_narrative(profile)` |
+| `core/coder.py` | `generate_code(hypothesis)` |
+| `core/__init__.py` | package marker (no functions) |
 
-```bash
-cd ai_scientist
-pip install -r requirements.txt
-```
-
-## Run Standalone
-
-```bash
-python app.py
-```
-
-## Config (`config.py`)
-
-`config.py` defines:
-- File paths: `DATA_PATH`, `OUTPUT_DIR`, `RESULT_PATH`, `DB_PATH`, `REPORT_PATH`, `LOGS_PATH`, `GENERATED_CODE_PATH`
-- LLM model names: `MODEL_RESEARCHER`, `MODEL_CODER`
-- Retry limit: `MAX_RETRIES`
-
-## Data Input
-
-For supervised runs, place a CSV with a `target` column at:
+## 🧭 Pipeline behavior (`app.py`)
 
 ```text
-data/sample.csv
+run_ai_scientist(...)
+  1) Read config.DATA_PATH
+  2) run_health_check
+  3) Route mode via should_run_unsupervised
+  4a) Supervised: decide_models -> hypothesis -> optional feature eng -> run_automl
+      -> SHAP -> optional self-improve round2 -> insight -> save_experiment -> report
+  4b) Unsupervised: decide_unsupervised_algos -> run_unsupervised
+      -> cluster profiling -> insight -> save_experiment -> report
 ```
 
-The Streamlit UI writes uploaded files to the same path.
+## 🛠️ Config values (`config.py`)
 
-## Outputs (`outputs/`)
+| Name | Value / meaning |
+|---|---|
+| `BASE_DIR` | Absolute path of `ai_scientist` directory |
+| `DATA_PATH` | `BASE_DIR\data\sample.csv` |
+| `OUTPUT_DIR` | `BASE_DIR\outputs` |
+| `RESULT_PATH` | `OUTPUT_DIR\results.json` |
+| `DB_PATH` | `OUTPUT_DIR\lab_notebook.db` |
+| `REPORT_PATH` | `OUTPUT_DIR\report.pdf` |
+| `LOGS_PATH` | `OUTPUT_DIR\logs.txt` |
+| `GENERATED_CODE_PATH` | `OUTPUT_DIR\generated_script.py` |
+| `MODEL_RESEARCHER` | `llama-3.3-70b-versatile` |
+| `MODEL_CODER` | `llama-3.3-70b-versatile` |
+| `MAX_RETRIES` | `3` |
 
-The pipeline writes/uses:
-- `report.pdf` (or text fallback report path when PDF backend is unavailable)
-- `generated_script.py` (configured output code path)
-- `paper_results.csv` (lab notebook export summary)
-- `lab_notebook.db` (SQLite experiment history)
-- `results.json` (latest serialized run results)
+## 📦 Output files and where they are saved
+
+| Output | Path | Produced by |
+|---|---|---|
+| Experiment results JSON | `ai_scientist\outputs\results.json` | `run_automl()` and `run_unsupervised()` |
+| SQLite lab notebook | `ai_scientist\outputs\lab_notebook.db` | `save_experiment()` |
+| Report PDF | `ai_scientist\outputs\report.pdf` | `generate_pdf_report()` |
+| Report fallback text | same path with `.txt` extension | `generate_pdf_report()` when `fpdf2` unavailable |
+| Report fallback PDF | `outputs\report_fallback.pdf` | `generate_pdf_report()` secondary fallback |
+| Enriched training CSV | `ai_scientist\data\sample_enriched.csv` | `app.py` feature engineering branch |
+| Round-2 reduced CSV | `<round1_path>_r2.csv` (example: `sample_enriched_r2.csv`) | `app.py` self-improvement drop-columns branch |
+| Paper CSV export | `ai_scientist\outputs\paper_results.csv` (default) | `export_to_csv()` when invoked |
+
+## 🧾 Dataset requirements
+
+| Mode | Requirements |
+|---|---|
+| Supervised | CSV must contain a `target` column (`run_automl` returns error if missing) |
+| Unsupervised | Any CSV; `target` is optional and dropped if present |
+
+Additional format details derived from preprocessing:
+
+1. File type: CSV readable by `pandas.read_csv`.
+2. Categorical columns are label-encoded.
+3. Missing numeric values are filled with median.
+4. Task detection for supervised is based on `target`: object dtype or `<15` unique values → classification, otherwise regression.

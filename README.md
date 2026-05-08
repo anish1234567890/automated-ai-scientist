@@ -1,80 +1,142 @@
-# Automated AI Scientist (AAS)
+<!-- v4.0 -->
 
-Automated AI Scientist (AAS) is a hybrid ML system that takes natural-language experiment goals, routes them through an LLM researcher agent, runs supervised or unsupervised optimization pipelines, generates explainability and self-improvement rounds, and produces persistent experiment records, downloadable code, and reports through a Streamlit interface.
+# 🧪 Automated AI Scientist (AAS)
 
-## Features
+Automated AI Scientist is a natural-language-driven ML system that can run either a supervised AutoML pipeline or an unsupervised clustering/anomaly pipeline from the same prompt, then generate hypothesis, SHAP explanations, round-2 self-improvement, insights, notebook records, downloadable code, and a report.
 
-### 1. LLM Researcher Agent
-- Interprets user prompts with Groq-hosted **Llama 3.3 70B**.
-- Selects supervised models or unsupervised algorithms from supported registries.
-- Generates pre-experiment hypotheses and post-experiment scientific insights.
+What makes it different: it is not a single-pass trainer. In supervised mode it explicitly performs a scientist-style loop (**Round 1 → analysis → LLM improvement plan → Round 2 → delta comparison**).
 
-### 2. Dataset Processing Module
-- Loads CSV input from `ai_scientist/data/sample.csv`.
-- Preprocesses categorical and missing values for both supervised and unsupervised flows.
-- Runs dataset health checks (missingness, duplicates, imbalance, outliers, correlation, size warnings).
+## 🚀 What it does
 
-### 3. AutoML Engine
-- Supports 21 supervised models with Optuna hyperparameter tuning.
-- Uses 5-fold CV pipelines with polynomial features + feature selection.
-- Builds top-3 voting ensembles and generates runnable final Python code.
+| Capability | What is implemented in code |
+|---|---|
+| Prompt-to-model routing | `core.researcher.decide_models()` and `decide_unsupervised_algos()` choose models/algorithms from fixed allowed lists |
+| Automatic mode selection | `core.unsupervised_engine.should_run_unsupervised()` uses prompt keywords or missing `target` column |
+| Dataset health audit | `core.data_health.run_health_check()` scores data (0–100), grade (A–D), issues, summary, stats |
+| Supervised AutoML | `core.automl_engine.run_automl()` runs Optuna tuning per model + CV scoring + top-3 voting ensemble |
+| Unsupervised optimization | `core.unsupervised_engine.run_unsupervised()` tunes clustering/anomaly algorithms and computes silhouette/DB/CH metrics |
+| LLM feature engineering | `core.feature_engineer.run_feature_engineering()` proposes/evaluates feature expressions and enriches dataset |
+| SHAP explainability | `core.shap_explainer.run_shap_for_best_model()` explains best supervised model |
+| Self-improvement loop | `core.self_improve` builds round-2 plan/config and compares round-1 vs round-2 |
+| Cluster interpretation | `core.cluster_profiler.profile_clusters()` + `generate_cluster_narrative()` |
+| Persistence | `core.lab_notebook.save_experiment()` stores experiments in SQLite |
+| Reports | `core.report_generator.generate_pdf_report()` writes PDF (or `.txt` fallback if `fpdf2` unavailable) |
+| UI | `ui/streamlit_app.py` runs, tracks progress, and renders all tabs/downloads |
 
-### 4. Explainability & Self-Improvement Module
-- Computes SHAP explanations for the best supervised model.
-- Builds an LLM-driven round-2 improvement plan.
-- Applies round-2 model/trial/feature-drop strategy and compares deltas vs round 1.
+## 🧠 Full supervised model list (from `MODEL_REGISTRY`)
 
-### 5. Persistence & Reporting Layer
-- Saves experiments to SQLite lab notebook (`lab_notebook.db`).
-- Exports paper-style summary CSV (`paper_results.csv`).
-- Generates PDF reports via `fpdf2` (with text fallback if unavailable).
+| Model name |
+|---|
+| Random Forest |
+| XGBoost |
+| LightGBM |
+| CatBoost |
+| Gradient Boosting |
+| AdaBoost |
+| Extra Trees |
+| Bagging |
+| Decision Tree |
+| KNN |
+| K-Nearest Neighbors (alias mapped to KNN family) |
+| SVM |
+| Logistic Regression |
+| Linear Regression |
+| Ridge Regression |
+| Lasso Regression |
+| Elastic Net |
+| SGD |
+| Bayesian Ridge |
+| Huber |
+| Naive Bayes |
+| LDA |
 
-## Tech Stack
+## 🏗️ Architecture (actual call chain from `ai_scientist/app.py`)
 
-- Python 3.10+
-- Streamlit
-- Groq API
-- Llama 3.3 70B (`llama-3.3-70b-versatile`)
-- Optuna
-- scikit-learn
-- XGBoost
-- LightGBM
-- SHAP
-- SQLite
-- fpdf2
+```text
+ui/streamlit_app.py
+  └─ run_ai_scientist(user_prompt, progress_callback, n_trials, enable_feature_eng, enable_self_improve)
+      ├─ Load CSV from config.DATA_PATH
+      ├─ run_health_check(df)
+      ├─ should_run_unsupervised(df, user_prompt)?
+      │
+      ├─ YES (unsupervised):
+      │   ├─ decide_unsupervised_algos(user_prompt)
+      │   ├─ run_unsupervised(DATA_PATH, selected_algos, RESULT_PATH, n_trials)
+      │   ├─ profile_clusters(...) + generate_cluster_narrative(...)
+      │   ├─ generate_unsupervised_insight(...)
+      │   ├─ save_experiment(..., mode="unsupervised")
+      │   └─ generate_pdf_report(..., mode="unsupervised")
+      │
+      └─ NO (supervised):
+          ├─ decide_models(user_prompt, df)
+          ├─ generate_hypothesis(...)
+          ├─ optional run_feature_engineering(...)
+          ├─ run_automl(train_path, selected_models, RESULT_PATH, n_trials)   [Round 1]
+          ├─ run_shap_for_best_model(...)
+          ├─ optional _call_llm_for_improvement_plan(...)
+          │   ├─ build_improved_experiment(...)
+          │   ├─ optional SHAP-based feature dropping
+          │   ├─ run_automl(...Round 2 config...)                             [Round 2]
+          │   └─ compare_rounds(round1, round2)
+          ├─ generate_insight(...)
+          ├─ save_experiment(..., mode="supervised")
+          └─ generate_pdf_report(..., mode="supervised")
+```
 
-## Quick Start
+## 💬 Example prompts that work with the researcher agent
 
+```text
+Try random forest and xgboost
+Compare all boosting models
+Use lasso regression, ridge regression, and elastic net
+Find clusters in this data
+Detect anomalies with isolation forest and local outlier factor
+Try everything for clustering
+```
+
+## ⚙️ Quick start (global Python install)
+
+1. Clone:
 ```bash
 git clone https://github.com/anish1234567890/automated-ai-scientist.git
 cd automated-ai-scientist
-cd ai_scientist
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-copy ..\.env.example .env
 ```
 
-Set your key in `ai_scientist/.env`:
+2. Install dependencies:
+```bash
+pip install -r ai_scientist/requirements.txt
+```
 
+3. Set API key in `ai_scientist\.env`:
 ```env
 GROQ_API_KEY=your_groq_key
 ```
 
-Run the UI:
-
+4. Run Streamlit UI:
 ```bash
-cd ..\ui
-streamlit run streamlit_app.py
+streamlit run ui\streamlit_app.py
 ```
 
-## Project Structure
+## 🧰 Tech stack (from requirements + imports)
+
+| Category | Libraries / tools used in code |
+|---|---|
+| UI | Streamlit, Altair (optional plotting path in UI) |
+| LLM | Groq API, python-dotenv, model `llama-3.3-70b-versatile` |
+| ML core | scikit-learn, Optuna |
+| Boosting libraries | XGBoost, LightGBM, CatBoost |
+| Explainability | SHAP |
+| Data | pandas, numpy |
+| Reporting | fpdf2 |
+| Storage | SQLite (`sqlite3`) |
+| Also listed in requirements | tpot, h2o, pycaret |
+
+## 📁 Project folder structure (current workspace files)
 
 ```text
 automated-ai-scientist/
-├── AUDIT_REPORT.md
+├── .gitignore
 ├── README.md
-├── syntax_check.py
 ├── ai_scientist/
 │   ├── .env
 │   ├── .env.example
@@ -83,29 +145,48 @@ automated-ai-scientist/
 │   ├── config.py
 │   ├── requirements.txt
 │   ├── test.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── automl_engine.py
+│   │   ├── cluster_profiler.py
+│   │   ├── coder.py
+│   │   ├── data_health.py
+│   │   ├── feature_engineer.py
+│   │   ├── lab_notebook.py
+│   │   ├── report_generator.py
+│   │   ├── researcher.py
+│   │   ├── self_improve.py
+│   │   ├── shap_explainer.py
+│   │   └── unsupervised_engine.py
 │   ├── data/
+│   │   ├── adult_income.csv
+│   │   ├── breast_cancer.csv
+│   │   ├── california_housing.csv
+│   │   ├── diabetes.csv
+│   │   ├── iris.csv
+│   │   ├── sample.csv
+│   │   ├── sample_enriched.csv
+│   │   ├── sample_enriched_r2.csv
+│   │   ├── sample_r2.csv
+│   │   └── wine_quality.csv
 │   ├── outputs/
+│   │   ├── generated_script.py
+│   │   ├── lab_notebook.db
+│   │   ├── logs.txt
+│   │   ├── report.pdf
+│   │   └── results.json
 │   ├── test_outputs/
-│   └── core/
-│       ├── __init__.py
-│       ├── automl_engine.py
-│       ├── cluster_profiler.py
-│       ├── coder.py
-│       ├── data_health.py
-│       ├── feature_engineer.py
-│       ├── lab_notebook.py
-│       ├── report_generator.py
-│       ├── researcher.py
-│       ├── self_improve.py
-│       ├── shap_explainer.py
-│       └── unsupervised_engine.py
-├── ui/
-│   ├── README.md
-│   └── streamlit_app.py
-└── venv/
+│   │   └── test.db
+│   └── catboost_info/
+├── me/
+│   ├── AUDIT_REPORT.md
+│   ├── CHANGES_SINCE_LAST_PUSH.txt
+│   ├── PROJECT_COMPLETE_ANALYSIS.md
+│   ├── new_audit.md
+│   └── s -ExecutionPolicy RemoteSigned) ; (& cUsersAnishOneDriveDesktopmajor projectautomated-ai-scientistvenvScriptsActivate.ps1)
+└── ui/
+    ├── README.md
+    └── streamlit_app.py
 ```
 
-## Sub-READMEs
-
-- UI details: [`ui/README.md`](ui/README.md)
-- Backend/core details: [`ai_scientist/README.md`](ai_scientist/README.md)
+## 👨‍💻 Built by Anish

@@ -376,7 +376,7 @@ def _generate_final_code(results: dict, data_path: str) -> str:
     if uses_cat:  lines.append("from catboost import CatBoostClassifier, CatBoostRegressor")
 
     lines.append("")
-    lines.append("# ── Load & preprocess ───────────────────────────────────────")
+    lines.append("# -- Load & preprocess -----------------------------------------------")
     lines.append(f'df = pd.read_csv(r"{data_path}")')
     lines.append("X  = df.drop('target', axis=1)")
     lines.append("y  = df['target']")
@@ -457,7 +457,7 @@ def _generate_final_code(results: dict, data_path: str) -> str:
             lines.append(f'print(f"{name}: RMSE = {{{svar}:.4f}}")')
         lines.append("")
 
-    lines.append("# ── Final summary ───────────────────────────────────────────")
+    lines.append("# -- Final summary ---------------------------------------------------")
     lines.append('print("\\n" + "="*55)')
     lines.append('print("FINAL RESULTS SUMMARY")')
     lines.append('print("="*55)')

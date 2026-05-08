@@ -62,7 +62,6 @@ with st.sidebar:
     st.caption("📋 Cluster Profiling")
     st.divider()
     st.caption("LLM: Llama 3.3 70B via Groq")
-    st.caption("Built by Anish")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -433,6 +432,12 @@ if "Run" in page:
                 f'Δ = <strong>{delta:+.4f}</strong></div>',
                 unsafe_allow_html=True,
             )
+            if delta > 0:
+                st.success(f"✅ Round 2 improved by +{delta:.4f}")
+            elif delta < 0:
+                st.warning(f"⚠️ Round 2 did not improve ({delta:.4f})")
+            else:
+                st.info("➡️ No change between rounds")
 
         st.divider()
 
@@ -443,7 +448,26 @@ if "Run" in page:
             task   = results.get("task", "unknown")
             metric = "Accuracy" if task == "classification" else "RMSE"
             mdata  = [m for m in results.get("models", []) if m.get("score") is not None]
+            r2_data = [m for m in (r2 or {}).get("models", []) if m.get("score") is not None]
+            if task == "classification":
+                r2_data = sorted(r2_data, key=lambda x: x["score"], reverse=True)
+            else:
+                r2_data = sorted(r2_data, key=lambda x: x["score"])
             ens    = results.get("ensemble", {})
+            r1_best = mdata[0] if mdata else {}
+            r2_best = rc.get("round2_best", {}) if rc else {}
+            round2_improved = bool(rc.get("improved")) and bool(r2_data)
+
+            if round2_improved and r2_best:
+                best_model = r2_best.get("name", r2_data[0]["name"])
+                best_score = r2_best.get("score", r2_data[0]["score"])
+                best_round = "Round 2"
+                best_badge = "🔄 Round 2"
+            else:
+                best_model = r1_best.get("name", "N/A")
+                best_score = r1_best.get("score")
+                best_round = "Round 1"
+                best_badge = "⚙️ Round 1"
 
             # Summary row
             st.subheader("📊 Results Summary")
@@ -451,14 +475,30 @@ if "Run" in page:
             with c1: st.metric("Mode",   "SUPERVISED")
             with c2: st.metric("Task",   task.upper())
             with c3:
-                if mdata:
-                    b = mdata[0]
-                    st.metric(f"Best {metric}", _fmt4(b.get("score")), delta=b["name"])
+                if best_model != "N/A":
+                    st.metric(f"Best {metric}", _fmt4(best_score), delta=best_model)
+                    st.caption(best_badge)
             with c4:
                 if ens and not ens.get("error"):
                     st.metric("Ensemble", _fmt4(ens.get("cv_score")), delta="Top-3")
             with c5:
                 st.metric("Dataset", f"{shape[0]}×{shape[1]}" if shape else "N/A")
+
+            if mdata:
+                s1, s2, s3 = st.columns(3)
+                with s1:
+                    st.markdown(
+                        f"**⚙️ Round 1:** {r1_best.get('name', 'N/A')} — {_fmt4(r1_best.get('score'))}"
+                    )
+                with s2:
+                    if r2_data:
+                        r2_best_name = r2_best.get("name", r2_data[0]["name"])
+                        r2_best_score = r2_best.get("score", r2_data[0]["score"])
+                        st.markdown(f"**🔄 Round 2:** {r2_best_name} — {_fmt4(r2_best_score)}")
+                    else:
+                        st.markdown("**🔄 Round 2:** N/A")
+                with s3:
+                    st.markdown(f"**Overall Best ({best_round}):** {best_model} — {_fmt4(best_score)}")
 
             st.divider()
 
@@ -478,19 +518,47 @@ if "Run" in page:
                 st.subheader(f"🏆 {metric} Leaderboard (5-fold CV)")
                 st.caption("Pipeline: PolynomialFeatures → SelectKBest(30%) → Model")
                 if mdata:
-                    best = mdata[0]
                     st.markdown(
-                        f'<div class="c-blue">🥇 <strong>{best["name"]}</strong>'
-                        f' — {metric}: <strong>{_fmt4(best.get("score"))}</strong></div>',
+                        f'<div class="c-blue">🥇 <strong>{best_model}</strong>'
+                        f' — {metric}: <strong>{_fmt4(best_score)}</strong>'
+                        f' &nbsp;|&nbsp; <strong>{best_badge}</strong></div>',
                         unsafe_allow_html=True,
                     )
-                    rows = []
-                    for i, m in enumerate(mdata):
-                        medal = ["🥇","🥈","🥉"][i] if i < 3 else f"#{i+1}"
-                        rows.append({"Rank": medal, "Model": m["name"],
-                                     f"{metric} (CV-5)": round(m["score"], 4),
-                                     "Trials": m.get("n_trials", 25)})
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+                    if round2_improved:
+                        st.markdown("### 🔄 Round 2 Results (Auto-Improved)")
+                        r2_best_name = r2_best.get("name", r2_data[0]["name"])
+                        r2_rows = []
+                        for i, m in enumerate(r2_data):
+                            medal = ["🥇","🥈","🥉"][i] if i < 3 else f"#{i+1}"
+                            r2_rows.append({"Rank": medal, "Model": m["name"],
+                                            f"{metric} (CV-5)": round(m["score"], 4),
+                                            "Trials": m.get("n_trials", 25)})
+                        r2_df = pd.DataFrame(r2_rows)
+                        r2_style = r2_df.style.apply(
+                            lambda row: ["background-color: #dcfce7" if row["Model"] == r2_best_name else ""
+                                         for _ in row],
+                            axis=1,
+                        )
+                        st.dataframe(r2_style, width="stretch", hide_index=True)
+
+                        with st.expander("⚙️ Round 1 Results", expanded=False):
+                            r1_rows = []
+                            for i, m in enumerate(mdata):
+                                medal = ["🥇","🥈","🥉"][i] if i < 3 else f"#{i+1}"
+                                r1_rows.append({"Rank": medal, "Model": m["name"],
+                                                f"{metric} (CV-5)": round(m["score"], 4),
+                                                "Trials": m.get("n_trials", 25)})
+                            st.dataframe(pd.DataFrame(r1_rows), width="stretch", hide_index=True)
+                    else:
+                        st.markdown("### ⚙️ Round 1 Results")
+                        rows = []
+                        for i, m in enumerate(mdata):
+                            medal = ["🥇","🥈","🥉"][i] if i < 3 else f"#{i+1}"
+                            rows.append({"Rank": medal, "Model": m["name"],
+                                         f"{metric} (CV-5)": round(m["score"], 4),
+                                         "Trials": m.get("n_trials", 25)})
+                        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
                     if ens and not ens.get("error"):
                         st.markdown(
                             f'<div class="c-yellow">🤝 <strong>Ensemble (Top-3 Voting)</strong>'
@@ -498,8 +566,9 @@ if "Run" in page:
                             f' | {", ".join(ens.get("models_used", []))}</div>',
                             unsafe_allow_html=True,
                         )
-                    cdf = pd.DataFrame({"Model": [m["name"] for m in mdata],
-                                        metric:  [m["score"] for m in mdata]}).set_index("Model")
+                    chart_data = r2_data if round2_improved else mdata
+                    cdf = pd.DataFrame({"Model": [m["name"] for m in chart_data],
+                                        metric:  [m["score"] for m in chart_data]}).set_index("Model")
                     st.bar_chart(cdf)
                 else:
                     st.warning("No successful model results.")
